@@ -1,5 +1,12 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { AuditForm } from "@/components/audit/AuditForm";
+import { AuditProgress } from "@/components/audit/AuditProgress";
+import { saveReportToSession } from "@/lib/audit/reportSession";
 import { FRAMEWORK_CHECKPOINTS, CATEGORY_LABELS } from "@/data/framework";
+import type { AuditReport } from "@/types/audit.types";
 import { Search, FileText, BarChart3, Shield, Zap } from "lucide-react";
 
 const features = [
@@ -31,7 +38,37 @@ const features = [
 ];
 
 export default function HomePage() {
+  const router = useRouter();
+  const [auditUrl, setAuditUrl] = useState<string | null>(null);
+  const [error, setError] = useState("");
   const categories = Object.entries(CATEGORY_LABELS);
+
+  async function handleStart(url: string) {
+    setError("");
+    setAuditUrl(url);
+
+    try {
+      const res = await fetch("/api/audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to run audit");
+
+      const report = data as AuditReport;
+      saveReportToSession(report);
+      router.push(`/audit/${report.id}`);
+    } catch (err) {
+      setAuditUrl(null);
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    }
+  }
+
+  if (auditUrl) {
+    return <AuditProgress url={auditUrl} />;
+  }
 
   return (
     <div className="space-y-16">
@@ -48,7 +85,7 @@ export default function HomePage() {
           Get a detailed, developer-ready report with actionable fixes.
         </p>
         <div className="flex justify-center">
-          <AuditForm />
+          <AuditForm onSubmit={handleStart} error={error} />
         </div>
       </section>
 

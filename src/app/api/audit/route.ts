@@ -25,16 +25,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error }, { status: 400 });
     }
 
-    const auditId = await runAudit(url, {
+    const report = await runAudit(url, {
       maxPages: parsed.data.maxPages || Infinity,
       includeSubdomains: false,
       followExternalLinks: false,
     });
 
-    return NextResponse.json({ id: auditId, message: "Audit started" });
+    if (report.status === "failed") {
+      return NextResponse.json({ error: report.error || "Audit failed", report }, { status: 500 });
+    }
+
+    return NextResponse.json(report);
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to start audit" },
+      { error: error instanceof Error ? error.message : "Failed to run audit" },
       { status: 500 }
     );
   }

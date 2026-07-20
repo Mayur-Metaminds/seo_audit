@@ -2,27 +2,20 @@
 
 Technical SEO and page speed audit tool with **55 checkpoints** across crawlability, on-page signals, performance, assets, security, and E-E-A-T.
 
+## How it works
+
+1. You submit a URL — the API **runs the full audit in one request** and returns the completed report.
+2. The browser keeps the report in **session storage** (no Redis / database).
+3. Export PDF or Markdown from the report page (report is sent in the export request).
+
+No accounts or external storage required.
+
 ## Deploy to Vercel
 
-### 1. Push to GitHub and import in Vercel
+1. Push to GitHub and import in Vercel
+2. Deploy (no env vars required)
 
-### 2. Add Upstash Redis (required)
-
-Audits are stored in Redis and **auto-deleted after 30 minutes** (configurable via `AUDIT_TTL_MINUTES`).
-
-1. Go to [Upstash](https://upstash.com) → Create Redis database
-2. Copy **UPSTASH_REDIS_REST_URL** and **UPSTASH_REDIS_REST_TOKEN**
-3. Add to Vercel **Settings → Environment Variables** (or local `.env.local`)
-
-```env
-UPSTASH_REDIS_REST_URL=https://xxx.upstash.io
-UPSTASH_REDIS_REST_TOKEN=your-token
-AUDIT_TTL_MINUTES=30
-```
-
-### 3. Deploy
-
-Vercel Pro recommended (300s function timeout for full site crawls). `vercel.json` sets `maxDuration: 300`.
+Vercel Pro is recommended for large sites (`maxDuration: 300` in `vercel.json`). Hobby plans have a shorter function timeout.
 
 ```bash
 pnpm install
@@ -32,16 +25,6 @@ pnpm build
 ## Local Development
 
 ```bash
-cp .env.example .env.local
-pnpm install
-pnpm dev
-```
-
-Without Redis env vars, reports fall back to in-memory storage (local dev only) with the same TTL.
-
-```bash
-cp .env.example .env.local
-# Add your Upstash keys to .env.local
 pnpm install
 pnpm dev
 ```
@@ -49,14 +32,21 @@ pnpm dev
 ## API
 
 ```bash
-# Start audit
+# Run audit (waits until complete — can take several minutes)
 curl -X POST https://your-app.vercel.app/api/audit \
   -H "Content-Type: application/json" \
-  -d '{"url":"https://example.com"}'
+  -d '{"url":"https://example.com"}' \
+  -o report.json
 
-# Poll status
-curl https://your-app.vercel.app/api/audit/{id}
-
-# Export report
-curl https://your-app.vercel.app/api/export/{id} -o report.md
+# Export PDF (POST the report JSON body)
+curl -X POST "https://your-app.vercel.app/api/export?format=pdf" \
+  -H "Content-Type: application/json" \
+  -d @report.json \
+  -o report.pdf
 ```
+
+## Accuracy Notes
+
+- Some Core Web Vitals checks use **page-weight proxies**, not full Lighthouse lab data.
+- GSC / Bing Webmaster checks are marked **manual** (not scored as fails).
+- Compression detection may be marked manual because Node `fetch` auto-decompresses responses.

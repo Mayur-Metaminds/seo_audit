@@ -1,46 +1,73 @@
-import type { AuditReport } from "@/types/audit.types";
+"use client";
+
+import { useEffect, useState } from "react";
 import { Loader2, Search, Shield, Zap } from "lucide-react";
 
-const phaseIcons: Record<string, React.ReactNode> = {
-  initializing: <Loader2 className="h-5 w-5 animate-spin" />,
-  crawling: <Search className="h-5 w-5" />,
-  security: <Shield className="h-5 w-5" />,
-  auditing: <Zap className="h-5 w-5" />,
-};
+const PHASES = [
+  { key: "crawling", label: "Crawling site pages...", icon: Search },
+  { key: "security", label: "Running security checks...", icon: Shield },
+  { key: "auditing", label: "Running SEO checks...", icon: Zap },
+] as const;
 
-export function AuditProgress({ report }: { report: AuditReport }) {
-  const progress = report.progress;
-  const pct = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+interface AuditProgressProps {
+  url: string;
+}
+
+export function AuditProgress({ url }: AuditProgressProps) {
+  const [phaseIndex, setPhaseIndex] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const phaseTimer = setInterval(() => {
+      setPhaseIndex((i) => (i + 1) % PHASES.length);
+    }, 4000);
+
+    const clock = setInterval(() => {
+      setElapsed((s) => s + 1);
+    }, 1000);
+
+    return () => {
+      clearInterval(phaseTimer);
+      clearInterval(clock);
+    };
+  }, []);
+
+  const phase = PHASES[phaseIndex];
+  const Icon = phase.icon;
+  const domain = (() => {
+    try {
+      return new URL(url.startsWith("http") ? url : `https://${url}`).hostname;
+    } catch {
+      return url;
+    }
+  })();
+
+  const minutes = Math.floor(elapsed / 60);
+  const seconds = elapsed % 60;
+  const timeLabel = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 
   return (
     <div className="mx-auto max-w-lg text-center py-16">
       <div className="inline-flex items-center justify-center h-16 w-16 rounded-2xl bg-accent/10 text-accent mb-6 animate-pulse-ring">
-        {phaseIcons[progress.phase] || <Loader2 className="h-6 w-6 animate-spin" />}
+        <Icon className="h-6 w-6" />
       </div>
 
       <h2 className="text-xl font-semibold mb-2">Running SEO Audit</h2>
-      <p className="text-muted text-sm font-mono mb-1">{report.url}</p>
-      <p className="text-muted text-sm mb-8">{progress.message}</p>
+      <p className="text-muted text-sm font-mono mb-1">{url}</p>
+      <p className="text-muted text-sm mb-8">{phase.label}</p>
 
-      <div className="relative h-2 rounded-full bg-card-border overflow-hidden mb-3">
-        <div
-          className="absolute inset-y-0 left-0 bg-accent rounded-full transition-all duration-500"
-          style={{ width: `${Math.max(pct, 5)}%` }}
-        />
-      </div>
+      <div className="relative h-2 rounded-full bg-card-border overflow-hidden mb-3 progress-indeterminate" />
 
-      <p className="text-sm text-muted">
-        {progress.phase === "crawling" && `Crawling pages: ${progress.current} / ${progress.total}`}
-        {progress.phase === "auditing" && `Auditing pages: ${progress.current} / ${progress.total}`}
-        {progress.phase === "security" && "Running security checks..."}
-        {progress.phase === "initializing" && "Initializing audit engine..."}
+      <p className="text-sm text-muted flex items-center justify-center gap-2">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        Keep this tab open · {timeLabel} elapsed
       </p>
 
       <div className="mt-12 grid grid-cols-3 gap-4 text-left">
         {[
           { label: "Checkpoints", value: "55" },
-          { label: "Pages Found", value: String(report.totalPagesFound || report.pagesAudited || "...") },
-          { label: "Domain", value: report.domain },
+          { label: "Status", value: "In progress" },
+          { label: "Domain", value: domain },
         ].map((item) => (
           <div key={item.label} className="rounded-lg border border-card-border bg-card p-3">
             <p className="text-xs text-muted">{item.label}</p>
