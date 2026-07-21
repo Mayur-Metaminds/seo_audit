@@ -25,7 +25,19 @@ export function generateMarkdownReport(report: AuditReport): string {
   md += `| Failed | ${report.summary.failed} |\n`;
   md += `| Manual Review | ${report.summary.manual} |\n`;
   md += `| Pages Audited | ${report.pagesAudited} |\n`;
-  md += `| Total Pages Found | ${report.totalPagesFound} |\n\n`;
+  md += `| Total Pages Found | ${report.totalPagesFound} |\n`;
+  md += `| Remaining (not audited) | ${(report.remainingUrls || []).length} |\n\n`;
+
+  if ((report.remainingUrls || []).length > 0) {
+    md += `### Remaining URLs (not audited)\n\n`;
+    for (const u of report.remainingUrls.slice(0, 500)) {
+      md += `- ${u}\n`;
+    }
+    if (report.remainingUrls.length > 500) {
+      md += `\n_…and ${report.remainingUrls.length - 500} more_\n`;
+    }
+    md += `\n`;
+  }
 
   if (report.summary.strengths.length > 0) {
     md += `### Strengths\n\n`;

@@ -35,7 +35,7 @@ export function ScoreOverview({ report }: { report: AuditReport }) {
           <SummaryStat icon={<XCircle className="h-4 w-4 text-danger" />} label="Failed" value={report.summary.failed} />
           <SummaryStat icon={<Eye className="h-4 w-4 text-accent" />} label="Manual" value={report.summary.manual} />
         </div>
-        <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
+        <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
           <div>
             <span className="text-muted">Pages audited:</span>{" "}
             <span className="font-medium">{report.pagesAudited}</span>
@@ -43,6 +43,10 @@ export function ScoreOverview({ report }: { report: AuditReport }) {
           <div>
             <span className="text-muted">Total discovered:</span>{" "}
             <span className="font-medium">{report.totalPagesFound}</span>
+          </div>
+          <div>
+            <span className="text-muted">Remaining:</span>{" "}
+            <span className="font-medium">{(report.remainingUrls || []).length}</span>
           </div>
         </div>
       </div>

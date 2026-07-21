@@ -4,10 +4,7 @@ import { useEffect, useState } from "react";
 import { Loader2, Search, Shield, Zap, FileCheck2 } from "lucide-react";
 import type { AuditProgressEvent } from "@/lib/audit/runAudit";
 
-const PHASE_META: Record<
-  string,
-  { label: string; icon: typeof Search }
-> = {
+const PHASE_META: Record<string, { label: string; icon: typeof Search }> = {
   initializing: { label: "Initializing", icon: Loader2 },
   crawling: { label: "Crawling pages", icon: Search },
   security: { label: "Security checks", icon: Shield },
@@ -35,7 +32,8 @@ export function AuditProgress({ url, progress }: AuditProgressProps) {
   const Icon = meta.icon;
   const percent = progress?.percent ?? 0;
   const current = progress?.current ?? 0;
-  const total = progress?.total ?? 0;
+  const discovered = progress?.discovered ?? progress?.total ?? 0;
+  const remaining = progress?.remaining ?? Math.max(0, discovered - current);
   const currentUrl = progress?.url || url;
   const message = progress?.message || "Starting audit...";
 
@@ -53,7 +51,6 @@ export function AuditProgress({ url, progress }: AuditProgressProps) {
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-12 text-center">
-      {/* Fixed-height header block — no layout shift when phase/message change */}
       <div className="flex flex-col items-center">
         <div className="mb-6 flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-accent/10 text-accent animate-pulse-ring">
           <Icon className={`h-6 w-6 shrink-0 ${phase === "initializing" ? "animate-spin" : ""}`} />
@@ -66,7 +63,6 @@ export function AuditProgress({ url, progress }: AuditProgressProps) {
         </p>
       </div>
 
-      {/* Fixed-height URL card */}
       <div className="mb-6 h-[4.75rem] rounded-xl border border-card-border bg-card px-4 py-3 text-left">
         <p className="h-4 text-xs leading-4 text-muted">Currently scanning</p>
         <p className="mt-1.5 h-10 overflow-hidden font-mono text-sm leading-5 text-accent" title={currentUrl}>
@@ -74,10 +70,11 @@ export function AuditProgress({ url, progress }: AuditProgressProps) {
         </p>
       </div>
 
-      {/* Fixed-height progress row */}
       <div className="mb-2 flex h-5 items-center justify-between text-sm leading-5">
         <span className="min-w-0 truncate text-muted tabular-nums">
-          {total > 0 ? `${current} / ${total} pages` : "Discovering pages..."}
+          {discovered > 0
+            ? `${current} done · ${remaining} remaining · ${discovered} found`
+            : "Discovering pages..."}
         </span>
         <span className="shrink-0 pl-3 font-semibold tabular-nums">{percent}%</span>
       </div>
@@ -96,9 +93,9 @@ export function AuditProgress({ url, progress }: AuditProgressProps) {
 
       <div className="grid grid-cols-2 gap-3 text-left sm:grid-cols-4">
         {[
-          { label: "Phase", value: meta.label },
-          { label: "Pages found", value: total > 0 ? String(total) : "…" },
-          { label: "Processed", value: current > 0 ? String(current) : "…" },
+          { label: "Found", value: discovered > 0 ? String(discovered) : "…" },
+          { label: "Done", value: current > 0 ? String(current) : "…" },
+          { label: "Remaining", value: discovered > 0 ? String(remaining) : "…" },
           { label: "Domain", value: domain },
         ].map((item) => (
           <div key={item.label} className="h-[3.75rem] rounded-lg border border-card-border bg-card px-3 py-2.5">

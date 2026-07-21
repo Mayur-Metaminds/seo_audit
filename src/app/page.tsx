@@ -62,6 +62,7 @@ async function runStreamingAudit(
   let buffer = "";
   let report: AuditReport | null = null;
   let streamError: string | null = null;
+  let lastProgress: AuditProgressEvent | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -84,7 +85,8 @@ async function runStreamingAudit(
 
       if (event.type === "progress") {
         const { type: _type, ...rest } = event;
-        onProgress(rest as unknown as AuditProgressEvent);
+        lastProgress = rest as unknown as AuditProgressEvent;
+        onProgress(lastProgress);
       } else if (event.type === "complete") {
         report = event.report as AuditReport;
       } else if (event.type === "error") {
@@ -98,13 +100,27 @@ async function runStreamingAudit(
       const event = JSON.parse(buffer.trim());
       if (event.type === "complete") report = event.report as AuditReport;
       if (event.type === "error") streamError = String(event.error || "Audit failed");
+      if (event.type === "progress") {
+        const { type: _type, ...rest } = event;
+        lastProgress = rest as unknown as AuditProgressEvent;
+        onProgress(lastProgress);
+      }
     } catch {
-      // ignore trailing partial
+      // ignore trailing partial JSON (common when the function times out mid-stream)
     }
   }
 
   if (streamError) throw new Error(streamError);
-  if (!report) throw new Error("Audit finished without a report");
+  if (!report) {
+    if (lastProgress) {
+      throw new Error(
+        `Server stopped before finishing. Last status: ${lastProgress.phase} — ${lastProgress.current} done, ${lastProgress.remaining ?? "?"} remaining of ${lastProgress.discovered || lastProgress.total || "?"} found. On Vercel set AUDIT_MAX_PAGES=150; on your own server leave it unlimited and keep the tab open until complete.`
+      );
+    }
+    throw new Error(
+      "Audit finished without a report (connection closed early). On a custom server, ensure the process is not timed out; on Vercel set AUDIT_MAX_PAGES=150."
+    );
+  }
   return report;
 }
 
@@ -121,6 +137,8 @@ export default function HomePage() {
       phase: "initializing",
       current: 0,
       total: 0,
+      remaining: 0,
+      discovered: 0,
       percent: 0,
       url,
       message: "Connecting to audit engine...",

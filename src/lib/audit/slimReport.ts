@@ -31,6 +31,7 @@ function slimPage(page: PageAuditResult): PageAuditResult {
 export function slimReport(report: AuditReport): AuditReport {
   return {
     ...report,
+    remainingUrls: (report.remainingUrls || []).slice(0, 5000),
     pageResults: report.pageResults.map(slimPage),
     siteChecks: report.siteChecks.map(slimCheck),
     categoryScores: report.categoryScores.map((cat) => ({

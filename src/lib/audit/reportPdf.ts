@@ -137,6 +137,7 @@ export function generatePdfReport(report: AuditReport): Uint8Array {
       ["Manual Review", String(report.summary.manual)],
       ["Pages Audited", String(report.pagesAudited)],
       ["Total Pages Found", String(report.totalPagesFound)],
+      ["Remaining (not audited)", String((report.remainingUrls || []).length)],
     ],
     theme: "striped",
     headStyles: { fillColor: COLORS.dark, textColor: COLORS.white, fontSize: 9, fontStyle: "bold" },
@@ -154,6 +155,28 @@ export function generatePdfReport(report: AuditReport): Uint8Array {
       bodyText(`• ${issue}`, 9);
     }
     y += 4;
+  }
+
+  // ── Remaining URLs ──
+  const remaining = report.remainingUrls || [];
+  if (remaining.length > 0) {
+    heading(`Remaining Pages (${remaining.length} not audited)`, 14, COLORS.warn);
+    y += 2;
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [["#", "URL"]],
+      body: remaining.slice(0, 200).map((u, i) => [String(i + 1), u]),
+      theme: "striped",
+      headStyles: { fillColor: COLORS.dark, textColor: COLORS.white, fontSize: 8, fontStyle: "bold" },
+      bodyStyles: { fontSize: 7, textColor: COLORS.text, cellPadding: 1.2 },
+      alternateRowStyles: { fillColor: COLORS.lightGray },
+      columnStyles: { 0: { cellWidth: 10 }, 1: { cellWidth: contentWidth - 10 } },
+    });
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
+    if (remaining.length > 200) {
+      bodyText(`…and ${remaining.length - 200} more URLs (see Markdown export for full list).`, 8, COLORS.muted);
+    }
   }
 
   // ── Category Breakdown ──

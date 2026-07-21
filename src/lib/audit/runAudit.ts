@@ -16,11 +16,14 @@ import { buildPageResults, finalizeReport } from "@/lib/audit/scoring";
 import { getDomain, generateId } from "@/lib/utils/url";
 import { getTotalMaxScore } from "@/data/framework";
 import { slimReport } from "@/lib/audit/slimReport";
+import { isUnlimitedPages } from "@/lib/audit/limits";
 
 export interface AuditProgressEvent {
   phase: "initializing" | "crawling" | "security" | "auditing" | "finalizing" | "complete" | "failed";
   current: number;
   total: number;
+  remaining: number;
+  discovered: number;
   percent: number;
   url?: string;
   message: string;
@@ -36,11 +39,23 @@ export async function runAudit(
   const id = generateId();
   const origin = new URL(url).origin;
   let lastPercent = 0;
+  const unlimited = isUnlimitedPages(config.maxPages);
 
-  const emit = (event: Omit<AuditProgressEvent, "percent"> & { percent: number }) => {
+  const emit = (
+    event: Omit<AuditProgressEvent, "percent" | "remaining" | "discovered"> & {
+      percent: number;
+      remaining?: number;
+      discovered?: number;
+    }
+  ) => {
     const percent = Math.min(100, Math.max(lastPercent, Math.round(event.percent)));
     lastPercent = percent;
-    onProgress?.({ ...event, percent });
+    onProgress?.({
+      ...event,
+      percent,
+      remaining: event.remaining ?? Math.max(0, (event.total || 0) - (event.current || 0)),
+      discovered: event.discovered ?? event.total ?? 0,
+    });
   };
 
   let report: AuditReport = {
@@ -53,6 +68,7 @@ export async function runAudit(
     config,
     pagesAudited: 0,
     totalPagesFound: 0,
+    remainingUrls: [],
     pageResults: [],
     siteChecks: [],
     categoryScores: [],
@@ -67,20 +83,29 @@ export async function runAudit(
       phase: "initializing",
       current: 0,
       total: 0,
+      remaining: 0,
+      discovered: 0,
       percent: 2,
       url,
-      message: "Fetching robots.txt and sitemap...",
+      message: unlimited
+        ? "Fetching robots.txt and sitemap (full site crawl)..."
+        : `Fetching robots.txt and sitemap (cap ${config.maxPages} pages)...`,
     });
 
-    const crawl = await crawlSite(url, config, (current, total, pageUrl) => {
-      const crawlShare = total > 0 ? current / total : 0;
+    const crawl = await crawlSite(url, config, (current, discovered, remaining, pageUrl) => {
+      const denom = unlimited ? Math.max(discovered, current, 1) : Math.max(config.maxPages, 1);
+      const crawlShare = Math.min(1, current / denom);
       emit({
         phase: "crawling",
         current,
-        total,
+        total: discovered,
+        discovered,
+        remaining,
         percent: 5 + crawlShare * 60,
         url: pageUrl,
-        message: `Crawling page ${current} of ${Math.max(total, current)}`,
+        message: unlimited
+          ? `Crawling ${current} done · ${remaining} remaining · ${discovered} found`
+          : `Crawling ${current}/${config.maxPages} · ${discovered} found · ${remaining} left in queue`,
       });
     });
 
@@ -88,6 +113,8 @@ export async function runAudit(
       phase: "security",
       current: 0,
       total: 2,
+      remaining: 2,
+      discovered: crawl.allDiscoveredUrls.length,
       percent: 68,
       url,
       message: "Running security and 404 checks...",
@@ -102,6 +129,8 @@ export async function runAudit(
       phase: "security",
       current: 2,
       total: 2,
+      remaining: 0,
+      discovered: crawl.allDiscoveredUrls.length,
       percent: 72,
       url,
       message: "Security checks complete",
@@ -116,14 +145,17 @@ export async function runAudit(
     for (let i = 0; i < pagesToAudit.length; i++) {
       const page = pagesToAudit[i];
       const auditShare = pagesToAudit.length > 0 ? (i + 1) / pagesToAudit.length : 1;
+      const remainingAudit = pagesToAudit.length - (i + 1);
 
       emit({
         phase: "auditing",
         current: i + 1,
         total: pagesToAudit.length,
+        discovered: crawl.allDiscoveredUrls.length,
+        remaining: remainingAudit + crawl.remainingUrls.length,
         percent: 74 + auditShare * 20,
         url: page.finalUrl || page.url,
-        message: `Auditing page ${i + 1} of ${pagesToAudit.length}`,
+        message: `Auditing ${i + 1}/${pagesToAudit.length} · ${remainingAudit} pages left to score`,
       });
 
       const pageChecks = [...auditPage(page, url), ...auditPerformance(page), ...auditAssets(page)];
@@ -144,6 +176,8 @@ export async function runAudit(
       phase: "finalizing",
       current: pagesToAudit.length,
       total: pagesToAudit.length,
+      remaining: crawl.remainingUrls.length,
+      discovered: crawl.allDiscoveredUrls.length,
       percent: 96,
       message: "Aggregating site-level checks and scoring...",
     });
@@ -173,16 +207,29 @@ export async function runAudit(
       ...report,
       pagesAudited: crawl.pages.length,
       totalPagesFound: crawl.allDiscoveredUrls.length,
+      remainingUrls: crawl.remainingUrls,
     };
 
     const finalReport = slimReport(finalizeReport(report, allChecks, buildPageResults(pageData)));
+
+    if (finalReport.remainingUrls.length > 0) {
+      finalReport.summary.topIssues = [
+        `${finalReport.remainingUrls.length} URL(s) discovered but not audited yet — see Remaining Pages list.`,
+        ...finalReport.summary.topIssues,
+      ].slice(0, 15);
+    }
 
     emit({
       phase: "complete",
       current: finalReport.pagesAudited,
       total: finalReport.totalPagesFound,
+      discovered: finalReport.totalPagesFound,
+      remaining: finalReport.remainingUrls.length,
       percent: 100,
-      message: "Audit complete",
+      message:
+        finalReport.remainingUrls.length > 0
+          ? `Complete — ${finalReport.pagesAudited} audited, ${finalReport.remainingUrls.length} remaining`
+          : `Complete — all ${finalReport.pagesAudited} discovered pages audited`,
     });
 
     return finalReport;
@@ -192,6 +239,8 @@ export async function runAudit(
       phase: "failed",
       current: 0,
       total: 0,
+      remaining: 0,
+      discovered: 0,
       percent: lastPercent,
       message,
     });

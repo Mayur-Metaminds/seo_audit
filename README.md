@@ -4,9 +4,19 @@ Technical SEO and page speed audit tool with **55 checkpoints** across crawlabil
 
 ## How it works
 
-1. You submit a URL — the API **streams live progress** (current URL, page counts, 0–100%) then the completed report.
-2. The browser keeps the report in **memory + IndexedDB** (no Redis / no sessionStorage quota issues).
-3. PDF and Markdown are generated **in the browser** from that report.
+1. Submit a URL — the API **streams live progress** (current URL, found / done / remaining, 0–100%).
+2. **Custom server (default):** crawls **all** discovered pages — no chunking.
+3. **Vercel:** set `AUDIT_MAX_PAGES=150` so the function finishes within the time limit.
+4. If any URLs are left unaudited, the report shows a **Remaining Pages** list (copyable) plus Markdown/PDF export.
+5. Report is kept in **memory + IndexedDB**; PDF/Markdown are generated in the browser.
+
+```env
+# Custom server — full crawl
+AUDIT_MAX_PAGES=0
+
+# Vercel — safe cap
+# AUDIT_MAX_PAGES=150
+```
 
 No accounts or external storage required.
 

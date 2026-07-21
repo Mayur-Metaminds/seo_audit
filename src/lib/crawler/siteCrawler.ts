@@ -7,17 +7,28 @@ import { parseHtml } from "@/lib/utils/html";
 export interface CrawlResult {
   pages: CrawledPage[];
   allDiscoveredUrls: string[];
+  /** Discovered URLs that were not fetched (left in queue / hit maxPages). */
+  remainingUrls: string[];
+  /** URLs skipped because robots.txt blocked them. */
+  blockedUrls: string[];
   robots: Awaited<ReturnType<typeof fetchRobotsTxt>>;
   sitemap: Awaited<ReturnType<typeof fetchSitemap>>;
   linkStatusMap: Map<string, number>;
 }
 
-const CRAWL_CONCURRENCY = 3;
+export type CrawlProgressCallback = (
+  current: number,
+  discovered: number,
+  remaining: number,
+  url: string
+) => void;
+
+const CRAWL_CONCURRENCY = 5;
 
 export async function crawlSite(
   startUrl: string,
   config: AuditConfig,
-  onProgress?: (current: number, total: number, url: string) => void
+  onProgress?: CrawlProgressCallback
 ): Promise<CrawlResult> {
   const baseUrl = normalizeUrl(startUrl);
 
@@ -27,6 +38,7 @@ export async function crawlSite(
   const queueSet = new Set<string>([baseUrl]);
   const crawled = new Map<string, CrawledPage>();
   const allDiscovered = new Set<string>([baseUrl]);
+  const blockedUrls = new Set<string>();
   const linkStatusMap = new Map<string, number>();
 
   for (const sitemapUrl of sitemap.urls) {
@@ -38,19 +50,30 @@ export async function crawlSite(
   }
 
   const queue = [...queueSet];
-
   const limit = config.maxPages === Infinity ? Number.MAX_SAFE_INTEGER : config.maxPages;
 
   while (crawled.size < limit && queue.length > 0) {
     const batch: string[] = [];
     while (batch.length < CRAWL_CONCURRENCY && queue.length > 0 && crawled.size + batch.length < limit) {
       const url = queue.shift()!;
-      if (crawled.has(url) || batch.includes(url)) continue;
-      if (isUrlBlockedByRobots(url, robots.disallows, robots.allows)) continue;
+      if (crawled.has(url) || batch.includes(url) || blockedUrls.has(url)) continue;
+      if (isUrlBlockedByRobots(url, robots.disallows, robots.allows)) {
+        blockedUrls.add(url);
+        continue;
+      }
       batch.push(url);
     }
 
-    if (batch.length === 0) break;
+    if (batch.length === 0) {
+      // Only robots-blocked URLs left — drain them so we don't spin forever
+      if (queue.length > 0) {
+        for (const url of queue) {
+          if (!crawled.has(url)) blockedUrls.add(url);
+        }
+        queue.length = 0;
+      }
+      break;
+    }
 
     await Promise.all(
       batch.map(async (url) => {
@@ -71,7 +94,7 @@ export async function crawlSite(
               const normalized = normalizeUrl(resolved);
               allDiscovered.add(normalized);
 
-              if (!crawled.has(normalized) && !queueSet.has(normalized)) {
+              if (!crawled.has(normalized) && !queueSet.has(normalized) && !blockedUrls.has(normalized)) {
                 queueSet.add(normalized);
                 queue.push(normalized);
               }
@@ -95,14 +118,21 @@ export async function crawlSite(
           linkStatusMap.set(url, 0);
         }
 
-        onProgress?.(crawled.size, Math.max(allDiscovered.size, queueSet.size, crawled.size), url);
+        const remaining = Math.max(0, allDiscovered.size - crawled.size - blockedUrls.size);
+        onProgress?.(crawled.size, allDiscovered.size, remaining, url);
       })
     );
   }
 
+  const remainingUrls = [...allDiscovered].filter(
+    (u) => !crawled.has(u) && !blockedUrls.has(u)
+  );
+
   return {
     pages: [...crawled.values()],
     allDiscoveredUrls: [...allDiscovered],
+    remainingUrls,
+    blockedUrls: [...blockedUrls],
     robots,
     sitemap,
     linkStatusMap,

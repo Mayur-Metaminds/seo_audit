@@ -66,6 +66,8 @@ export interface AuditReport {
   config: AuditConfig;
   pagesAudited: number;
   totalPagesFound: number;
+  /** URLs discovered but not crawled/audited yet (empty when full crawl finishes). */
+  remainingUrls: string[];
   pageResults: PageAuditResult[];
   siteChecks: CheckResult[];
   categoryScores: CategoryScore[];

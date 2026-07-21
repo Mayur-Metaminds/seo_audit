@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { runAudit } from "@/lib/audit/runAudit";
+import { resolveMaxPages } from "@/lib/audit/limits";
 import { validateAuditUrl } from "@/lib/utils/validateUrl";
 
 export const maxDuration = 300;
@@ -7,7 +8,8 @@ export const runtime = "nodejs";
 
 const startAuditSchema = z.object({
   url: z.string().min(1, "URL is required"),
-  maxPages: z.number().min(1).optional(),
+  /** Omit or 0 = unlimited (recommended on custom servers). */
+  maxPages: z.number().min(0).optional(),
 });
 
 export async function POST(request: Request) {
@@ -24,18 +26,23 @@ export async function POST(request: Request) {
       return Response.json({ error }, { status: 400 });
     }
 
+    const maxPages = resolveMaxPages(parsed.data.maxPages);
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
         const send = (payload: unknown) => {
-          controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
+          try {
+            controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
+          } catch {
+            // Client disconnected
+          }
         };
 
         try {
           const report = await runAudit(
             url,
             {
-              maxPages: parsed.data.maxPages || Infinity,
+              maxPages,
               includeSubdomains: false,
               followExternalLinks: false,
             },
@@ -53,7 +60,11 @@ export async function POST(request: Request) {
             error: err instanceof Error ? err.message : "Failed to run audit",
           });
         } finally {
-          controller.close();
+          try {
+            controller.close();
+          } catch {
+            // already closed
+          }
         }
       },
     });
