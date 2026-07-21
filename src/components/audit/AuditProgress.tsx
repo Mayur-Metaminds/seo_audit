@@ -1,39 +1,44 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, Search, Shield, Zap } from "lucide-react";
+import { Loader2, Search, Shield, Zap, FileCheck2 } from "lucide-react";
+import type { AuditProgressEvent } from "@/lib/audit/runAudit";
 
-const PHASES = [
-  { key: "crawling", label: "Crawling site pages...", icon: Search },
-  { key: "security", label: "Running security checks...", icon: Shield },
-  { key: "auditing", label: "Running SEO checks...", icon: Zap },
-] as const;
+const PHASE_META: Record<
+  string,
+  { label: string; icon: typeof Search }
+> = {
+  initializing: { label: "Initializing", icon: Loader2 },
+  crawling: { label: "Crawling pages", icon: Search },
+  security: { label: "Security checks", icon: Shield },
+  auditing: { label: "Auditing pages", icon: Zap },
+  finalizing: { label: "Building report", icon: FileCheck2 },
+  complete: { label: "Complete", icon: FileCheck2 },
+  failed: { label: "Failed", icon: Shield },
+};
 
 interface AuditProgressProps {
   url: string;
+  progress: AuditProgressEvent | null;
 }
 
-export function AuditProgress({ url }: AuditProgressProps) {
-  const [phaseIndex, setPhaseIndex] = useState(0);
+export function AuditProgress({ url, progress }: AuditProgressProps) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    const phaseTimer = setInterval(() => {
-      setPhaseIndex((i) => (i + 1) % PHASES.length);
-    }, 4000);
-
-    const clock = setInterval(() => {
-      setElapsed((s) => s + 1);
-    }, 1000);
-
-    return () => {
-      clearInterval(phaseTimer);
-      clearInterval(clock);
-    };
+    const clock = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(clock);
   }, []);
 
-  const phase = PHASES[phaseIndex];
-  const Icon = phase.icon;
+  const phase = progress?.phase || "initializing";
+  const meta = PHASE_META[phase] || PHASE_META.initializing;
+  const Icon = meta.icon;
+  const percent = progress?.percent ?? 0;
+  const current = progress?.current ?? 0;
+  const total = progress?.total ?? 0;
+  const currentUrl = progress?.url || url;
+  const message = progress?.message || "Starting audit...";
+
   const domain = (() => {
     try {
       return new URL(url.startsWith("http") ? url : `https://${url}`).hostname;
@@ -44,34 +49,63 @@ export function AuditProgress({ url }: AuditProgressProps) {
 
   const minutes = Math.floor(elapsed / 60);
   const seconds = elapsed % 60;
-  const timeLabel = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+  const timeLabel = minutes > 0 ? `${minutes}m ${seconds.toString().padStart(2, "0")}s` : `${seconds}s`;
 
   return (
-    <div className="mx-auto max-w-lg text-center py-16">
-      <div className="inline-flex items-center justify-center h-16 w-16 rounded-2xl bg-accent/10 text-accent mb-6 animate-pulse-ring">
-        <Icon className="h-6 w-6" />
+    <div className="mx-auto w-full max-w-2xl px-4 py-12 text-center">
+      {/* Fixed-height header block — no layout shift when phase/message change */}
+      <div className="flex flex-col items-center">
+        <div className="mb-6 flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-accent/10 text-accent animate-pulse-ring">
+          <Icon className={`h-6 w-6 shrink-0 ${phase === "initializing" ? "animate-spin" : ""}`} />
+        </div>
+
+        <h2 className="h-7 text-xl font-semibold leading-7">Running SEO Audit</h2>
+        <p className="mt-1 h-5 text-sm leading-5 text-muted">{meta.label}</p>
+        <p className="mt-1 mb-6 h-5 w-full max-w-lg truncate text-sm leading-5 text-muted" title={message}>
+          {message}
+        </p>
       </div>
 
-      <h2 className="text-xl font-semibold mb-2">Running SEO Audit</h2>
-      <p className="text-muted text-sm font-mono mb-1">{url}</p>
-      <p className="text-muted text-sm mb-8">{phase.label}</p>
+      {/* Fixed-height URL card */}
+      <div className="mb-6 h-[4.75rem] rounded-xl border border-card-border bg-card px-4 py-3 text-left">
+        <p className="h-4 text-xs leading-4 text-muted">Currently scanning</p>
+        <p className="mt-1.5 h-10 overflow-hidden font-mono text-sm leading-5 text-accent" title={currentUrl}>
+          <span className="line-clamp-2 break-all">{currentUrl}</span>
+        </p>
+      </div>
 
-      <div className="relative h-2 rounded-full bg-card-border overflow-hidden mb-3 progress-indeterminate" />
+      {/* Fixed-height progress row */}
+      <div className="mb-2 flex h-5 items-center justify-between text-sm leading-5">
+        <span className="min-w-0 truncate text-muted tabular-nums">
+          {total > 0 ? `${current} / ${total} pages` : "Discovering pages..."}
+        </span>
+        <span className="shrink-0 pl-3 font-semibold tabular-nums">{percent}%</span>
+      </div>
 
-      <p className="text-sm text-muted flex items-center justify-center gap-2">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Keep this tab open · {timeLabel} elapsed
+      <div className="relative mb-3 h-3 overflow-hidden rounded-full bg-card-border">
+        <div
+          className="absolute inset-y-0 left-0 rounded-full bg-accent transition-[width] duration-300 ease-out"
+          style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
+        />
+      </div>
+
+      <p className="mb-10 flex h-5 items-center justify-center gap-2 text-sm leading-5 text-muted">
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+        <span className="tabular-nums">Keep this tab open · {timeLabel} elapsed</span>
       </p>
 
-      <div className="mt-12 grid grid-cols-3 gap-4 text-left">
+      <div className="grid grid-cols-2 gap-3 text-left sm:grid-cols-4">
         {[
-          { label: "Checkpoints", value: "55" },
-          { label: "Status", value: "In progress" },
+          { label: "Phase", value: meta.label },
+          { label: "Pages found", value: total > 0 ? String(total) : "…" },
+          { label: "Processed", value: current > 0 ? String(current) : "…" },
           { label: "Domain", value: domain },
         ].map((item) => (
-          <div key={item.label} className="rounded-lg border border-card-border bg-card p-3">
-            <p className="text-xs text-muted">{item.label}</p>
-            <p className="text-sm font-medium truncate">{item.value}</p>
+          <div key={item.label} className="h-[3.75rem] rounded-lg border border-card-border bg-card px-3 py-2.5">
+            <p className="h-4 text-xs leading-4 text-muted">{item.label}</p>
+            <p className="mt-1 h-5 truncate text-sm font-medium leading-5" title={item.value}>
+              {item.value}
+            </p>
           </div>
         ))}
       </div>

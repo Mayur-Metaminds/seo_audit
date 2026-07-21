@@ -54,8 +54,6 @@ export async function crawlSite(
 
     await Promise.all(
       batch.map(async (url) => {
-        onProgress?.(crawled.size + 1, queueSet.size, url);
-
         try {
           const page = await fetchWithRedirects(url);
           crawled.set(url, page);
@@ -96,6 +94,8 @@ export async function crawlSite(
           });
           linkStatusMap.set(url, 0);
         }
+
+        onProgress?.(crawled.size, Math.max(allDiscovered.size, queueSet.size, crawled.size), url);
       })
     );
   }

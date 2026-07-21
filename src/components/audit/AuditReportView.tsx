@@ -7,32 +7,16 @@ import { ScoreOverview } from "./ScoreOverview";
 import { CategoryBreakdown } from "./CategoryBreakdown";
 import { ChecklistResults } from "./ChecklistResults";
 import { PageReportTable } from "./PageReportTable";
-import { loadReportFromSession } from "@/lib/audit/reportSession";
+import { loadReport } from "@/lib/audit/reportCache";
+import { generateMarkdownReport } from "@/lib/audit/reportExport";
+import { generatePdfReport } from "@/lib/audit/reportPdf";
 import { Download, FileText, ArrowLeft, Loader2 } from "lucide-react";
 
 interface AuditReportViewProps {
   auditId: string;
 }
 
-async function downloadExport(report: AuditReport, format: "pdf" | "markdown") {
-  const res = await fetch(`/api/export?format=${format}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(report),
-  });
-
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || "Export failed");
-  }
-
-  const blob = await res.blob();
-  const disposition = res.headers.get("Content-Disposition") || "";
-  const match = disposition.match(/filename="([^"]+)"/);
-  const filename =
-    match?.[1] ||
-    `seo-audit-${report.domain}-${new Date().toISOString().slice(0, 10)}.${format === "pdf" ? "pdf" : "md"}`;
-
+function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -41,18 +25,43 @@ async function downloadExport(report: AuditReport, format: "pdf" | "markdown") {
   URL.revokeObjectURL(url);
 }
 
+async function downloadExport(report: AuditReport, format: "pdf" | "markdown") {
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const base = `seo-audit-${report.domain}-${dateStr}`;
+
+  if (format === "markdown") {
+    const md = generateMarkdownReport(report);
+    triggerDownload(new Blob([md], { type: "text/markdown;charset=utf-8" }), `${base}.md`);
+    return;
+  }
+
+  const pdf = generatePdfReport(report);
+  const bytes = new Uint8Array(pdf);
+  triggerDownload(new Blob([bytes], { type: "application/pdf" }), `${base}.pdf`);
+}
+
 export function AuditReportView({ auditId }: AuditReportViewProps) {
   const [report, setReport] = useState<AuditReport | null>(null);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState<"pdf" | "markdown" | null>(null);
 
   useEffect(() => {
-    const stored = loadReportFromSession(auditId);
-    if (!stored) {
-      setError("Report not found in this browser session. Run a new audit from the home page.");
-      return;
+    let cancelled = false;
+
+    async function load() {
+      const stored = await loadReport(auditId);
+      if (cancelled) return;
+      if (!stored) {
+        setError("Report not found in this browser. Run a new audit from the home page.");
+        return;
+      }
+      setReport(stored);
     }
-    setReport(stored);
+
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, [auditId]);
 
   async function handleExport(format: "pdf" | "markdown") {

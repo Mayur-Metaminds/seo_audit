@@ -4,9 +4,9 @@ Technical SEO and page speed audit tool with **55 checkpoints** across crawlabil
 
 ## How it works
 
-1. You submit a URL — the API **runs the full audit in one request** and returns the completed report.
-2. The browser keeps the report in **session storage** (no Redis / database).
-3. Export PDF or Markdown from the report page (report is sent in the export request).
+1. You submit a URL — the API **streams live progress** (current URL, page counts, 0–100%) then the completed report.
+2. The browser keeps the report in **memory + IndexedDB** (no Redis / no sessionStorage quota issues).
+3. PDF and Markdown are generated **in the browser** from that report.
 
 No accounts or external storage required.
 

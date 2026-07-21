@@ -4,7 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AuditForm } from "@/components/audit/AuditForm";
 import { AuditProgress } from "@/components/audit/AuditProgress";
-import { saveReportToSession } from "@/lib/audit/reportSession";
+import { saveReport } from "@/lib/audit/reportCache";
+import type { AuditProgressEvent } from "@/lib/audit/runAudit";
 import { FRAMEWORK_CHECKPOINTS, CATEGORY_LABELS } from "@/data/framework";
 import type { AuditReport } from "@/types/audit.types";
 import { Search, FileText, BarChart3, Shield, Zap } from "lucide-react";
@@ -37,37 +38,108 @@ const features = [
   },
 ];
 
+async function runStreamingAudit(
+  url: string,
+  onProgress: (event: AuditProgressEvent) => void
+): Promise<AuditReport> {
+  const res = await fetch("/api/audit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
+    body: JSON.stringify({ url }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `Audit request failed (${res.status})`);
+  }
+
+  if (!res.body) {
+    throw new Error("No response stream from server");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let report: AuditReport | null = null;
+  let streamError: string | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      let event: { type: string; [key: string]: unknown };
+      try {
+        event = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+
+      if (event.type === "progress") {
+        const { type: _type, ...rest } = event;
+        onProgress(rest as unknown as AuditProgressEvent);
+      } else if (event.type === "complete") {
+        report = event.report as AuditReport;
+      } else if (event.type === "error") {
+        streamError = String(event.error || "Audit failed");
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    try {
+      const event = JSON.parse(buffer.trim());
+      if (event.type === "complete") report = event.report as AuditReport;
+      if (event.type === "error") streamError = String(event.error || "Audit failed");
+    } catch {
+      // ignore trailing partial
+    }
+  }
+
+  if (streamError) throw new Error(streamError);
+  if (!report) throw new Error("Audit finished without a report");
+  return report;
+}
+
 export default function HomePage() {
   const router = useRouter();
   const [auditUrl, setAuditUrl] = useState<string | null>(null);
+  const [progress, setProgress] = useState<AuditProgressEvent | null>(null);
   const [error, setError] = useState("");
   const categories = Object.entries(CATEGORY_LABELS);
 
   async function handleStart(url: string) {
     setError("");
+    setProgress({
+      phase: "initializing",
+      current: 0,
+      total: 0,
+      percent: 0,
+      url,
+      message: "Connecting to audit engine...",
+    });
     setAuditUrl(url);
 
     try {
-      const res = await fetch("/api/audit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to run audit");
-
-      const report = data as AuditReport;
-      saveReportToSession(report);
+      const report = await runStreamingAudit(url, setProgress);
+      await saveReport(report);
       router.push(`/audit/${report.id}`);
     } catch (err) {
       setAuditUrl(null);
+      setProgress(null);
       setError(err instanceof Error ? err.message : "Something went wrong");
     }
   }
 
   if (auditUrl) {
-    return <AuditProgress url={auditUrl} />;
+    return <AuditProgress url={auditUrl} progress={progress} />;
   }
 
   return (

@@ -27,7 +27,7 @@ function statusLabel(status: string): string {
   return { pass: "PASS", warn: "WARN", fail: "FAIL", na: "N/A", manual: "MANUAL" }[status] || status.toUpperCase();
 }
 
-export function generatePdfReport(report: AuditReport): Buffer {
+export function generatePdfReport(report: AuditReport): Uint8Array {
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 15;
@@ -283,5 +283,5 @@ export function generatePdfReport(report: AuditReport): Buffer {
     addFooter(i, totalPages);
   }
 
-  return Buffer.from(doc.output("arraybuffer"));
+  return new Uint8Array(doc.output("arraybuffer"));
 }
