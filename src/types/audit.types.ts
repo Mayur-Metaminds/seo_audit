@@ -17,6 +17,10 @@ export interface FrameworkCheckpoint {
   priority: Priority;
   tools: string;
   maxScore: number;
+  codeLocation?: string;
+  issueCode?: string;
+  suggestion?: string;
+  solutionCode?: string;
 }
 
 export interface CheckResult {
@@ -29,6 +33,10 @@ export interface CheckResult {
   evidence?: string[];
   affectedUrls?: string[];
   scope: "site" | "page";
+  codeLocation?: string;
+  issueCode?: string;
+  suggestion?: string;
+  solutionCode?: string;
 }
 
 export interface PageAuditResult {

@@ -13,7 +13,7 @@ const COLORS = {
   warn: [255, 173, 31] as [number, number, number],
   fail: [244, 33, 46] as [number, number, number],
   white: [255, 255, 255] as [number, number, number],
-  lightGray: [245, 245, 245] as [number, number, number],
+  lightGray: [248, 249, 250] as [number, number, number],
 };
 
 function statusColor(status: string): [number, number, number] {
@@ -30,6 +30,7 @@ function statusLabel(status: string): string {
 export function generatePdfReport(report: AuditReport): Uint8Array {
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 15;
   const contentWidth = pageWidth - margin * 2;
   let y = margin;
@@ -40,46 +41,40 @@ export function generatePdfReport(report: AuditReport): Uint8Array {
   }
 
   function checkSpace(needed: number) {
-    if (y + needed > doc.internal.pageSize.getHeight() - margin) addPage();
+    if (y + needed > pageHeight - margin) {
+      addPage();
+    }
   }
 
   function heading(text: string, size: number, color = COLORS.dark) {
-    checkSpace(size + 4);
+    checkSpace(size * 0.5 + 6);
     doc.setFontSize(size);
     doc.setTextColor(...color);
     doc.setFont("helvetica", "bold");
-    doc.text(text, margin, y);
-    y += size * 0.5 + 2;
+    doc.text(text, margin, y + size * 0.35);
+    y += size * 0.45 + 3;
   }
 
-  function bodyText(text: string, size = 10, color = COLORS.text) {
-    checkSpace(size + 2);
+  function bodyText(text: string, size = 9, color = COLORS.text) {
     doc.setFontSize(size);
     doc.setTextColor(...color);
     doc.setFont("helvetica", "normal");
     const lines = doc.splitTextToSize(text, contentWidth);
-    doc.text(lines, margin, y);
-    y += lines.length * (size * 0.4) + 2;
-  }
-
-  function divider() {
-    checkSpace(4);
-    doc.setDrawColor(220, 220, 220);
-    doc.setLineWidth(0.3);
-    doc.line(margin, y, pageWidth - margin, y);
-    y += 4;
+    checkSpace(lines.length * (size * 0.35) + 2);
+    doc.text(lines, margin, y + size * 0.3);
+    y += lines.length * (size * 0.35) + 2;
   }
 
   function addFooter(pageNum: number, totalPages: number) {
-    const footerY = doc.internal.pageSize.getHeight() - 8;
+    const footerY = pageHeight - 8;
     doc.setFontSize(7);
     doc.setTextColor(...COLORS.muted);
     doc.setFont("helvetica", "normal");
-    doc.text(`Metaminds SEO Check — ${report.domain}`, margin, footerY);
+    doc.text(`Metaminds SEO Audit Report — ${report.domain}`, margin, footerY);
     doc.text(`Page ${pageNum} of ${totalPages}`, pageWidth - margin, footerY, { align: "right" });
   }
 
-  // ── Cover Section ──
+  // ── Cover Banner ──
   const percentage = report.maxScore > 0 ? Math.round((report.overallScore / report.maxScore) * 100) : 0;
   const gradeLabel = {
     elite: "Elite (90%+)",
@@ -95,34 +90,33 @@ export function generatePdfReport(report: AuditReport): Uint8Array {
   }[report.grade];
 
   doc.setFillColor(...COLORS.dark);
-  doc.rect(0, 0, pageWidth, 55, "F");
+  doc.rect(0, 0, pageWidth, 50, "F");
 
-  doc.setFontSize(24);
+  doc.setFontSize(22);
   doc.setTextColor(...COLORS.white);
   doc.setFont("helvetica", "bold");
-  doc.text("SEO Audit Report", margin, 22);
+  doc.text("SEO Audit Report", margin, 20);
 
-  doc.setFontSize(11);
+  doc.setFontSize(10);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(180, 190, 200);
-  doc.text(report.url, margin, 32);
-  doc.text(`${new Date(report.completedAt || report.startedAt).toLocaleDateString()} — Metaminds SEO Check`, margin, 40);
+  doc.text(report.url, margin, 29);
+  doc.text(`${new Date(report.completedAt || report.startedAt).toLocaleDateString()} — Metaminds SEO Check`, margin, 37);
 
   // Score badge
   doc.setFillColor(...gradeColor);
-  doc.roundedRect(pageWidth - margin - 42, 12, 42, 28, 3, 3, "F");
-  doc.setFontSize(28);
+  doc.roundedRect(pageWidth - margin - 40, 10, 40, 28, 3, 3, "F");
+  doc.setFontSize(26);
   doc.setTextColor(...COLORS.white);
   doc.setFont("helvetica", "bold");
-  doc.text(`${percentage}%`, pageWidth - margin - 21, 28, { align: "center" });
+  doc.text(`${percentage}%`, pageWidth - margin - 20, 25, { align: "center" });
   doc.setFontSize(8);
-  doc.text(gradeLabel, pageWidth - margin - 21, 36, { align: "center" });
+  doc.text(gradeLabel, pageWidth - margin - 20, 33, { align: "center" });
 
-  y = 65;
+  y = 58;
 
   // ── Executive Summary ──
-  heading("Executive Summary", 16);
-  y += 2;
+  heading("Executive Summary", 14);
 
   autoTable(doc, {
     startY: y,
@@ -131,57 +125,70 @@ export function generatePdfReport(report: AuditReport): Uint8Array {
     body: [
       ["Overall Score", `${report.overallScore} / ${report.maxScore} (${percentage}%)`],
       ["Grade", gradeLabel],
-      ["Passed", String(report.summary.passed)],
-      ["Warnings", String(report.summary.warnings)],
-      ["Failed", String(report.summary.failed)],
-      ["Manual Review", String(report.summary.manual)],
+      ["Passed Checks", String(report.summary.passed)],
+      ["Warning Checks", String(report.summary.warnings)],
+      ["Failed Checks", String(report.summary.failed)],
+      ["Manual Review Checks", String(report.summary.manual)],
       ["Pages Audited", String(report.pagesAudited)],
-      ["Total Pages Found", String(report.totalPagesFound)],
-      ["Remaining (not audited)", String((report.remainingUrls || []).length)],
+      ["Total Pages Discovered", String(report.totalPagesFound)],
     ],
     theme: "striped",
-    headStyles: { fillColor: COLORS.dark, textColor: COLORS.white, fontSize: 9, fontStyle: "bold" },
-    bodyStyles: { fontSize: 9, textColor: COLORS.text },
+    headStyles: { fillColor: COLORS.dark, textColor: COLORS.white, fontSize: 8, fontStyle: "bold", cellPadding: 1.5 },
+    bodyStyles: { fontSize: 8, textColor: COLORS.text, cellPadding: 1.2 },
     alternateRowStyles: { fillColor: COLORS.lightGray },
-    columnStyles: { 0: { fontStyle: "bold", cellWidth: 50 } },
+    columnStyles: { 0: { fontStyle: "bold", cellWidth: 55 } },
   });
 
-  y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+  y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 5;
 
   // ── Priority Issues ──
   if (report.summary.topIssues.length > 0) {
-    heading("Priority Issues", 14, COLORS.fail);
-    for (const issue of report.summary.topIssues) {
-      bodyText(`• ${issue}`, 9);
-    }
-    y += 4;
+    checkSpace(25);
+    heading("Priority Issues for Developers", 12, COLORS.fail);
+
+    const issueRows = report.summary.topIssues.map((issue) => [issue]);
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [["Issue Description"]],
+      body: issueRows,
+      theme: "striped",
+      headStyles: { fillColor: COLORS.fail, textColor: COLORS.white, fontSize: 8, fontStyle: "bold", cellPadding: 1.2 },
+      bodyStyles: { fontSize: 8, textColor: COLORS.dark, cellPadding: 1.5 },
+      alternateRowStyles: { fillColor: COLORS.lightGray },
+    });
+
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 5;
   }
 
   // ── Remaining URLs ──
   const remaining = report.remainingUrls || [];
   if (remaining.length > 0) {
-    heading(`Remaining Pages (${remaining.length} not audited)`, 14, COLORS.warn);
-    y += 2;
+    checkSpace(25);
+    heading(`Remaining Pages (${remaining.length} discovered)`, 12, COLORS.warn);
+
     autoTable(doc, {
       startY: y,
       margin: { left: margin, right: margin },
-      head: [["#", "URL"]],
-      body: remaining.slice(0, 200).map((u, i) => [String(i + 1), u]),
+      head: [["#", "Discovered URL"]],
+      body: remaining.slice(0, 25).map((u, i) => [String(i + 1), u]),
       theme: "striped",
-      headStyles: { fillColor: COLORS.dark, textColor: COLORS.white, fontSize: 8, fontStyle: "bold" },
+      headStyles: { fillColor: COLORS.dark, textColor: COLORS.white, fontSize: 8, fontStyle: "bold", cellPadding: 1.2 },
       bodyStyles: { fontSize: 7, textColor: COLORS.text, cellPadding: 1.2 },
       alternateRowStyles: { fillColor: COLORS.lightGray },
       columnStyles: { 0: { cellWidth: 10 }, 1: { cellWidth: contentWidth - 10 } },
     });
-    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
-    if (remaining.length > 200) {
-      bodyText(`…and ${remaining.length - 200} more URLs (see Markdown export for full list).`, 8, COLORS.muted);
+
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 3;
+    if (remaining.length > 25) {
+      bodyText(`…and ${remaining.length - 25} more discovered URLs.`, 7.5, COLORS.muted);
     }
+    y += 2;
   }
 
   // ── Category Breakdown ──
-  heading("Category Breakdown", 14);
-  y += 2;
+  checkSpace(35);
+  heading("Category Breakdown", 13);
 
   autoTable(doc, {
     startY: y,
@@ -195,8 +202,8 @@ export function generatePdfReport(report: AuditReport): Uint8Array {
       cat.percentage >= 80 ? "Good" : cat.percentage >= 60 ? "Needs Work" : "Critical",
     ]),
     theme: "striped",
-    headStyles: { fillColor: COLORS.dark, textColor: COLORS.white, fontSize: 9, fontStyle: "bold" },
-    bodyStyles: { fontSize: 9, textColor: COLORS.text },
+    headStyles: { fillColor: COLORS.dark, textColor: COLORS.white, fontSize: 8, fontStyle: "bold", cellPadding: 1.5 },
+    bodyStyles: { fontSize: 8, textColor: COLORS.text, cellPadding: 1.5 },
     alternateRowStyles: { fillColor: COLORS.lightGray },
     didParseCell: (data) => {
       if (data.column.index === 4 && data.section === "body") {
@@ -208,13 +215,12 @@ export function generatePdfReport(report: AuditReport): Uint8Array {
     },
   });
 
-  y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+  y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
 
   // ── Detailed Findings ──
   for (const cat of report.categoryScores) {
-    checkSpace(20);
-    heading(cat.label, 13, COLORS.brand);
-    y += 2;
+    checkSpace(35);
+    heading(cat.label, 11, COLORS.brand);
 
     const rows = cat.checks.map((check) => {
       const cp = FRAMEWORK_CHECKPOINTS.find((f) => f.id === check.checkpointId);
@@ -235,17 +241,17 @@ export function generatePdfReport(report: AuditReport): Uint8Array {
       head: [["#", "Check", "Status", "Priority", "Score", "Finding", "Recommendation"]],
       body: rows,
       theme: "striped",
-      headStyles: { fillColor: COLORS.dark, textColor: COLORS.white, fontSize: 7, fontStyle: "bold" },
-      bodyStyles: { fontSize: 7, textColor: COLORS.text, cellPadding: 1.5 },
+      headStyles: { fillColor: COLORS.dark, textColor: COLORS.white, fontSize: 7, fontStyle: "bold", cellPadding: 1.2 },
+      bodyStyles: { fontSize: 7, textColor: COLORS.text, cellPadding: 1.2 },
       alternateRowStyles: { fillColor: COLORS.lightGray },
       columnStyles: {
         0: { cellWidth: 8 },
-        1: { cellWidth: 30 },
+        1: { cellWidth: 32 },
         2: { cellWidth: 12 },
         3: { cellWidth: 14 },
         4: { cellWidth: 12 },
-        5: { cellWidth: 40 },
-        6: { cellWidth: contentWidth - 116 },
+        5: { cellWidth: 42 },
+        6: { cellWidth: contentWidth - 120 },
       },
       didParseCell: (data) => {
         if (data.column.index === 2 && data.section === "body") {
@@ -256,13 +262,12 @@ export function generatePdfReport(report: AuditReport): Uint8Array {
       },
     });
 
-    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
+    y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 4;
   }
 
   // ── Per-Page Results ──
-  checkSpace(20);
-  heading("Per-Page Results", 14);
-  y += 2;
+  checkSpace(35);
+  heading("Per-Page Results", 13);
 
   const pageRows = report.pageResults.map((page) => [
     page.url.replace(/^https?:\/\/[^/]+/, ""),
@@ -276,11 +281,11 @@ export function generatePdfReport(report: AuditReport): Uint8Array {
   autoTable(doc, {
     startY: y,
     margin: { left: margin, right: margin },
-    head: [["URL", "HTTP", "TTFB", "Size", "Issues", "Top Findings"]],
+    head: [["URL Path", "HTTP", "TTFB", "Size", "Issues", "Top Findings"]],
     body: pageRows,
     theme: "striped",
-    headStyles: { fillColor: COLORS.dark, textColor: COLORS.white, fontSize: 8, fontStyle: "bold" },
-    bodyStyles: { fontSize: 7, textColor: COLORS.text, cellPadding: 1.5 },
+    headStyles: { fillColor: COLORS.dark, textColor: COLORS.white, fontSize: 7.5, fontStyle: "bold", cellPadding: 1.2 },
+    bodyStyles: { fontSize: 7, textColor: COLORS.text, cellPadding: 1.2 },
     alternateRowStyles: { fillColor: COLORS.lightGray },
     columnStyles: {
       0: { cellWidth: 45 },

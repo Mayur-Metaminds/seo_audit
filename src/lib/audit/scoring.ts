@@ -97,9 +97,13 @@ export function buildPageResults(
   }[]
 ): PageAuditResult[] {
   return pages.map((page) => {
-    const issues = page.checks
-      .filter((c) => c.status === "fail" || c.status === "warn")
-      .map((c) => `[#${c.checkpointId}] ${c.message}`);
+    const failed = page.checks.filter((c) => c.status === "fail");
+    const warn = page.checks.filter((c) => c.status === "warn");
+
+    const issues = [
+      ...failed.map((c) => `[FAIL #${c.checkpointId}] ${c.message}`),
+      ...warn.map((c) => `[WARN #${c.checkpointId}] ${c.message}`),
+    ];
 
     return {
       url: page.finalUrl,
