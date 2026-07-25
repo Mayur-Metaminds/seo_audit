@@ -15,7 +15,6 @@ interface SolutionModalProps {
 }
 
 export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }: SolutionModalProps) {
-  const [copied, setCopied] = useState(false);
   const [urlIndex, setUrlIndex] = useState(0);
 
   const id = check?.checkpointId || checkpointId;
@@ -60,12 +59,6 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
   const solutionCode = baseSolutionCode && urls.length > 1
     ? `<!-- Corrected Solution for Page #${urlIndex + 1}: ${activeUrlPath} -->\n${baseSolutionCode}`
     : baseSolutionCode;
-
-  const handleCopy = (code: string) => {
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
@@ -195,20 +188,23 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
               </div>
             )}
 
-            {/* Problem Code Box */}
-            <div className="rounded-xl border border-danger/40 bg-slate-950 text-slate-100 overflow-hidden shadow-inner flex-1 flex flex-col min-h-[180px]">
+            {/* Problem Code Box (Diff Viewer) */}
+            <div className="rounded-xl border border-danger/40 bg-slate-950 text-slate-100 overflow-hidden shadow-inner flex-1 flex flex-col min-h-[220px]">
               <div className="flex items-center justify-between px-4 py-2.5 bg-danger/20 border-b border-danger/30 text-xs font-semibold text-danger shrink-0">
                 <div className="flex items-center gap-2">
                   <AlertOctagon className="h-4 w-4 text-danger" />
-                  <span>Problematic Code (Item #{urlIndex + 1})</span>
+                  <span>Problematic Code Context (Item #{urlIndex + 1})</span>
                 </div>
                 {urls.length > 1 && (
                   <span className="text-[10px] font-mono text-muted">Page {urlIndex + 1} of {urls.length}</span>
                 )}
               </div>
-              <div className="p-4 font-mono text-xs leading-relaxed overflow-x-auto bg-slate-950 text-slate-300 flex-1">
-                <pre>{issueCode}</pre>
-              </div>
+              
+              <DiffCodeBlock
+                code={issueCode}
+                type="issue"
+                onCopy={(txt) => navigator.clipboard.writeText(txt)}
+              />
             </div>
           </div>
 
@@ -225,37 +221,21 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
               </div>
             )}
 
-            {/* Solution Code Box */}
+            {/* Solution Code Box (Diff Viewer) */}
             {solutionCode && (
-              <div className="rounded-xl border border-emerald-500/40 bg-slate-950 text-slate-100 overflow-hidden shadow-inner flex-1 flex flex-col min-h-[180px]">
+              <div className="rounded-xl border border-emerald-500/40 bg-slate-950 text-slate-100 overflow-hidden shadow-inner flex-1 flex flex-col min-h-[220px]">
                 <div className="flex items-center justify-between px-4 py-2.5 bg-emerald-950/40 border-b border-emerald-500/30 shrink-0">
                   <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
                     <Code2 className="h-4 w-4" />
-                    <span>Corrected Solution Code (Item #{urlIndex + 1})</span>
+                    <span>Corrected Solution Code Context (Item #{urlIndex + 1})</span>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(solutionCode)}
-                    className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white transition-colors"
-                  >
-                    {copied ? (
-                      <>
-                        <Check className="h-3.5 w-3.5 text-emerald-400" />
-                        <span className="text-emerald-400">Copied!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="h-3.5 w-3.5" />
-                        <span>Copy Code</span>
-                      </>
-                    )}
-                  </button>
                 </div>
 
-                <div className="p-4 font-mono text-xs leading-relaxed overflow-x-auto bg-slate-950 text-slate-200 flex-1">
-                  <pre>{solutionCode}</pre>
-                </div>
+                <DiffCodeBlock
+                  code={solutionCode}
+                  type="solution"
+                  onCopy={(txt) => navigator.clipboard.writeText(txt)}
+                />
               </div>
             )}
 
@@ -264,8 +244,9 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
               <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
               <div className="text-xs text-slate-300 space-y-1">
                 <p className="font-semibold text-emerald-400">Verification Steps:</p>
-                <p>1. Copy corrected code snippet for <span className="font-mono text-amber-300">{activeUrlPath}</span> to <span className="font-mono text-amber-300">{location}</span>.</p>
-                <p>2. Save file & re-run audit to confirm it passes!</p>
+                <p>1. Search for <span className="font-mono text-amber-300">{location}</span> in your IDE.</p>
+                <p>2. Copy the corrected code snippet above and replace the issue line.</p>
+                <p>3. Save file & re-run audit to confirm it passes!</p>
               </div>
             </div>
           </div>
@@ -284,6 +265,139 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
             Close Solution
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function DiffCodeBlock({
+  code,
+  type,
+  onCopy,
+}: {
+  code: string;
+  type: "issue" | "solution";
+  onCopy: (copiedText: string) => void;
+}) {
+  const [copiedPill, setCopiedPill] = useState<string | null>(null);
+  const [copiedFull, setCopiedFull] = useState(false);
+
+  const lines = code.split("\n");
+
+  // Extract all unique class names for quick IDE search
+  const extractedClassNames = (() => {
+    const matches = code.matchAll(/class(?:Name)?=["']([^"']+)["']/g);
+    const set = new Set<string>();
+    for (const m of matches) {
+      if (m[1]) {
+        m[1].split(/\s+/).forEach((cls) => {
+          if (cls.length > 2 && !cls.includes("<") && !cls.includes(">")) {
+            set.add(cls);
+          }
+        });
+      }
+    }
+    return Array.from(set).slice(0, 6);
+  })();
+
+  const handleCopyPill = (clsName: string) => {
+    navigator.clipboard.writeText(clsName);
+    setCopiedPill(clsName);
+    setTimeout(() => setCopiedPill(null), 2000);
+  };
+
+  const handleCopyFull = () => {
+    onCopy(code);
+    setCopiedFull(true);
+    setTimeout(() => setCopiedFull(false), 2000);
+  };
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden bg-slate-950">
+      {/* Chrome DevTools Search Helper Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3.5 py-2 bg-slate-900/90 border-b border-slate-800 text-[11px] font-mono text-slate-400 shrink-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-slate-500 font-semibold">DevTools Class Search:</span>
+          {extractedClassNames.length > 0 ? (
+            extractedClassNames.map((cls) => (
+              <button
+                key={cls}
+                type="button"
+                onClick={() => handleCopyPill(cls)}
+                className={cn(
+                  "px-2 py-0.5 rounded border transition-colors flex items-center gap-1 font-semibold",
+                  copiedPill === cls
+                    ? "bg-emerald-950 text-emerald-300 border-emerald-500"
+                    : "bg-slate-800 text-amber-300 border-slate-700 hover:bg-slate-700 hover:text-amber-200"
+                )}
+                title="Click to copy class name for Ctrl+Shift+F IDE search"
+              >
+                {copiedPill === cls ? <Check className="h-3 w-3 text-emerald-400" /> : null}
+                <span>{cls}</span>
+              </button>
+            ))
+          ) : (
+            <span className="text-slate-500 italic">Use code tags below</span>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={handleCopyFull}
+          className="self-end sm:self-auto px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold transition-colors flex items-center gap-1 shrink-0"
+        >
+          {copiedFull ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+          <span>{copiedFull ? "Copied Code!" : "Copy Code"}</span>
+        </button>
+      </div>
+
+      {/* Code Table with Line Numbers (Chrome DevTools Inspector Style) */}
+      <div className="p-0 font-mono text-xs leading-relaxed overflow-x-auto flex-1 bg-slate-950">
+        <table className="w-full border-collapse">
+          <tbody>
+            {lines.map((line, idx) => {
+              const trimmed = line.trim();
+              const isRemoved = type === "issue" && (trimmed.startsWith("-") || line.includes("<!-- Issue") || line.includes("<!-- Missing") || line.includes("<!-- Broken"));
+              const isAdded = type === "solution" && (trimmed.startsWith("+") || line.includes("<!-- Corrected") || line.includes("<!-- Solution") || line.includes("<!-- Fixed"));
+
+              return (
+                <tr
+                  key={idx}
+                  className={cn(
+                    "transition-colors",
+                    isRemoved
+                      ? "bg-rose-950/40 text-rose-300 font-semibold border-l-2 border-rose-500"
+                      : isAdded
+                      ? "bg-emerald-950/40 text-emerald-300 font-semibold border-l-2 border-emerald-500"
+                      : "hover:bg-slate-900/60 text-slate-300 border-l-2 border-transparent"
+                  )}
+                >
+                  <td className="w-9 select-none text-right pr-2 text-slate-600 text-[11px] border-r border-slate-800/80 bg-slate-950/80 py-1 font-mono">
+                    {idx + 1}
+                  </td>
+
+                  <td className="w-5 select-none text-center font-bold text-xs py-1">
+                    {trimmed.startsWith("-") ? (
+                      <span className="text-rose-400">-</span>
+                    ) : trimmed.startsWith("+") ? (
+                      <span className="text-emerald-400">+</span>
+                    ) : isRemoved ? (
+                      <span className="text-rose-400">-</span>
+                    ) : isAdded ? (
+                      <span className="text-emerald-400">+</span>
+                    ) : (
+                      <span className="text-slate-700"> </span>
+                    )}
+                  </td>
+
+                  <td className="py-1 px-3 whitespace-pre">
+                    {line.replace(/^[+-]\s?/, "")}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

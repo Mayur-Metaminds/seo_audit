@@ -17,6 +17,7 @@ import {
   hasMainContent,
   hasViewportMeta,
   parseHtml,
+  extractRealElementSnippet,
 } from "@/lib/utils/html";
 import { getDomain, isSameDomain, resolveUrl, normalizeUrl } from "@/lib/utils/url";
 
@@ -47,18 +48,25 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
   // #4 Canonical
   const canonical = getCanonical($);
   if (!canonical) {
+    const headSnippet = extractRealElementSnippet($, "head") || "<head>\n  <!-- Missing canonical tag -->\n</head>";
     checks.push(makeResult(4, "fail", 0, 5, "Missing canonical tag", {
       scope: "page",
+      issueCode: headSnippet,
+      solutionCode: headSnippet.replace("</head>", `  <link rel="canonical" href="${url}" />\n</head>`),
       recommendation: "Add a self-referencing canonical link tag pointing to this page's preferred URL.",
       affectedUrls: [url],
     }));
   } else {
     const canonicalUrl = canonical.startsWith("http") ? canonical : resolveUrl(canonical, url) || canonical;
     const isSelfRef = canonicalUrl ? normalizeUrl(canonicalUrl) === normalizeUrl(page.finalUrl) : false;
+    const realCan = extractRealElementSnippet($, "link[rel='canonical']") || `<link rel="canonical" href="${canonical}" />`;
+
     if (!canonical.startsWith("http") && !isSelfRef) {
       checks.push(makeResult(4, "warn", 3, 5, "Canonical is a relative URL", {
         scope: "page",
         evidence: [canonical],
+        issueCode: `- ${realCan}`,
+        solutionCode: `+ <link rel="canonical" href="${url}" />`,
         recommendation: "Use absolute self-referencing URLs in canonical tags.",
         affectedUrls: [url],
       }));
@@ -66,6 +74,8 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
       checks.push(makeResult(4, "warn", 2, 5, "Canonical points to a different URL", {
         scope: "page",
         evidence: [canonical],
+        issueCode: `- ${realCan}`,
+        solutionCode: `+ <link rel="canonical" href="${url}" />`,
         recommendation: "Ensure canonical matches the preferred URL for this page.",
         affectedUrls: [url],
       }));
@@ -143,9 +153,12 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
 
   // #9 Title
   const title = getTitle($);
+  const realTitleHead = extractRealElementSnippet($, "head") || "<head>\n  <title>Your Title</title>\n</head>";
   if (!title) {
     checks.push(makeResult(9, "fail", 0, 5, "Missing title tag", {
       scope: "page",
+      issueCode: realTitleHead,
+      solutionCode: realTitleHead.replace("</head>", "  <title>Descriptive 50-60 Character Title | Brand</title>\n</head>"),
       recommendation: "Add a unique, descriptive title tag (50-60 characters).",
       affectedUrls: [url],
     }));
@@ -153,6 +166,8 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
     checks.push(makeResult(9, "warn", 2, 5, `Title too short (${title.length} chars)`, {
       scope: "page",
       evidence: [title],
+      issueCode: `- <title>${title}</title>`,
+      solutionCode: `+ <title>${title} | Full Descriptive Title Keywords</title>`,
       recommendation: "Expand title to 50-60 characters with primary keyword.",
       affectedUrls: [url],
     }));
@@ -160,6 +175,8 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
     checks.push(makeResult(9, "warn", 3, 5, `Title too long (${title.length} chars)`, {
       scope: "page",
       evidence: [title],
+      issueCode: `- <title>${title}</title>`,
+      solutionCode: `+ <title>${title.slice(0, 55)}...</title>`,
       recommendation: "Shorten title to 50-60 characters to avoid truncation in SERPs.",
       affectedUrls: [url],
     }));
@@ -169,9 +186,12 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
 
   // #10 Meta description
   const description = getMetaContent($, "description");
+  const realDescHead = extractRealElementSnippet($, "head") || "<head>\n  <!-- Missing meta description -->\n</head>";
   if (!description) {
     checks.push(makeResult(10, "fail", 0, 5, "Missing meta description", {
       scope: "page",
+      issueCode: realDescHead,
+      solutionCode: realDescHead.replace("</head>", '  <meta name="description" content="Add your unique 120-155 character meta description summary here." />\n</head>'),
       recommendation: "Add a unique meta description (120-155 chars) with CTA.",
       affectedUrls: [url],
     }));
@@ -179,12 +199,16 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
     checks.push(makeResult(10, "warn", 2, 5, `Meta description too short (${description.length} chars)`, {
       scope: "page",
       evidence: [description],
+      issueCode: `- <meta name="description" content="${description}" />`,
+      solutionCode: `+ <meta name="description" content="${description} ... Add detailed CTA summary text." />`,
       affectedUrls: [url],
     }));
   } else if (description.length > 160) {
     checks.push(makeResult(10, "warn", 3, 5, `Meta description too long (${description.length} chars)`, {
       scope: "page",
       evidence: [description],
+      issueCode: `- <meta name="description" content="${description}" />`,
+      solutionCode: `+ <meta name="description" content="${description.slice(0, 150)}..." />`,
       affectedUrls: [url],
     }));
   } else {
@@ -196,9 +220,14 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
 
   // #11 H1
   const h1s = getH1s($);
+  const realH1 = extractRealElementSnippet($, "h1") || extractRealElementSnippet($, "header") || "<main>\n  <!-- Missing H1 tag -->\n</main>";
   if (h1s.length === 0) {
     checks.push(makeResult(11, "fail", 0, 5, "Missing H1 tag", {
       scope: "page",
+      issueCode: realH1,
+      solutionCode: realH1.includes("<main>")
+        ? realH1.replace("<main>", "<main>\n  <h1 className=\"page-title text-3xl font-bold\">Main Page Title</h1>")
+        : `<h1>Descriptive Page Heading</h1>\n${realH1}`,
       recommendation: "Add exactly one H1 tag that matches page intent.",
       affectedUrls: [url],
     }));
@@ -206,6 +235,8 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
     checks.push(makeResult(11, "fail", 0, 5, `Multiple H1 tags found (${h1s.length})`, {
       scope: "page",
       evidence: h1s,
+      issueCode: `- <h1>${h1s[0]}</h1>\n- <h1>${h1s[1]}</h1>`,
+      solutionCode: `+ <h1>${h1s[0]}</h1>\n+ <h2>${h1s[1]}</h2>`,
       recommendation: "Use exactly one H1 per page. Convert extras to H2.",
       affectedUrls: [url],
     }));
@@ -271,11 +302,14 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
   const images = getImages($);
   const missingAlt = images.filter((img) => !img.alt);
   const decorativeOk = images.filter((img) => img.alt === "");
+  const realImgSnippet = extractRealElementSnippet($, "img:not([alt])") || extractRealElementSnippet($, "img") || "<img src=\"/example.jpg\" />";
   if (images.length === 0) {
     checks.push(makeResult(15, "na", 5, 5, "No images on page", { scope: "page" }));
   } else if (missingAlt.length > 0) {
     checks.push(makeResult(15, "fail", 1, 5, `${missingAlt.length}/${images.length} images missing alt attribute`, {
       scope: "page",
+      issueCode: realImgSnippet,
+      solutionCode: realImgSnippet.replace("<img ", '<img alt="Descriptive image text" '),
       recommendation: "Add descriptive alt text to all meaningful images.",
       affectedUrls: [url],
     }));

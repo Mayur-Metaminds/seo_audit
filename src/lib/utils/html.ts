@@ -153,7 +153,65 @@ export function hasMainContent($: cheerio.CheerioAPI): boolean {
   return text.length > 100;
 }
 
-export function getFirst100Words($: cheerio.CheerioAPI): string {
-  const text = $("body").text().replace(/\s+/g, " ").trim();
-  return text.split(" ").slice(0, 100).join(" ");
+export function extractRealElementSnippet($: cheerio.CheerioAPI, selector: string): string | null {
+  try {
+    const el = $(selector).first();
+    if (!el || el.length === 0) return null;
+
+    // Collect up to 3 parent ancestor elements for full Chrome DevTools context
+    const ancestors: { tag: string; attrStr: string }[] = [];
+    let current = el.parent();
+    let depth = 0;
+
+    while (current && current.length > 0 && depth < 3) {
+      const g = current.get(0);
+      if (!g) break;
+      const tag = (g.tagName || "div").toLowerCase();
+      if (tag === "html" || tag === "body") break;
+
+      const attrs: string[] = [];
+      const cls = current.attr("class");
+      const id = current.attr("id");
+      if (id) attrs.push(`id="${id}"`);
+      if (cls) attrs.push(`class="${cls}"`);
+
+      for (const [k, v] of Object.entries(g.attribs || {})) {
+        if (k !== "class" && k !== "id" && (k.startsWith("data-") || k === "role" || k === "aria-label")) {
+          attrs.push(`${k}="${v}"`);
+        }
+      }
+
+      const attrStr = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
+      ancestors.unshift({ tag, attrStr });
+      current = current.parent();
+      depth++;
+    }
+
+    // Clean up target outer HTML snippet
+    let targetHtml = $.html(el);
+    targetHtml = targetHtml
+      .replace(/srcset="[^"]+"/g, 'srcset="..."')
+      .replace(/data:image\/[^;]+;base64,[^"']+/g, 'data:image/...');
+
+    // Build indented DOM tree matching Chrome DevTools inspector
+    let indent = "";
+    let openingTags = "";
+    let closingTags = "";
+
+    for (const a of ancestors) {
+      openingTags += `${indent}<${a.tag}${a.attrStr}>\n`;
+      indent += "  ";
+    }
+
+    const targetLines = targetHtml.split("\n").map((l) => `${indent}${l}`).join("\n");
+
+    for (let i = ancestors.length - 1; i >= 0; i--) {
+      indent = "  ".repeat(i);
+      closingTags += `\n${indent}</${ancestors[i].tag}>`;
+    }
+
+    return `${openingTags}${targetLines}${closingTags}`;
+  } catch {
+    return null;
+  }
 }
