@@ -56,28 +56,73 @@ export function auditBrokenLinks(crawl: CrawlResult, baseUrl: string): CheckResu
   return makeResult(6, "pass", 5, 5, "No broken internal links detected in crawled pages");
 }
 
-export function auditDuplicateMeta(crawl: CrawlResult): CheckResult {
+/** Combined duplicate title + meta check (single checkpoint #17). */
+export function auditDuplicateContent(crawl: CrawlResult): CheckResult {
+  const titleMap = new Map<string, string[]>();
   const descMap = new Map<string, string[]>();
 
   for (const page of crawl.pages) {
     if (!page.html) continue;
     const $ = parseHtml(page.html);
+    const title = getTitle($);
+    if (title) {
+      const existing = titleMap.get(title) || [];
+      existing.push(page.finalUrl);
+      titleMap.set(title, existing);
+    }
     const desc = getMetaContent($, "description");
-    if (!desc) continue;
-    const existing = descMap.get(desc) || [];
-    existing.push(page.finalUrl);
-    descMap.set(desc, existing);
+    if (desc) {
+      const existing = descMap.get(desc) || [];
+      existing.push(page.finalUrl);
+      descMap.set(desc, existing);
+    }
   }
 
-  const dups = [...descMap.entries()].filter(([, urls]) => urls.length > 1);
-  if (dups.length > 0) {
-    return makeResult(17, "warn", 2, 5, `${dups.length} duplicate meta description(s)`, {
-      evidence: dups.slice(0, 3).map(([d, u]) => `"${d.slice(0, 60)}..." on ${u.length} pages`),
-      recommendation: "Write unique meta descriptions for each page.",
+  const dupTitles = [...titleMap.entries()].filter(([, urls]) => urls.length > 1);
+  const dupMetas = [...descMap.entries()].filter(([, urls]) => urls.length > 1);
+
+  if (dupTitles.length === 0 && dupMetas.length === 0) {
+    return makeResult(17, "pass", 5, 5, "All crawled pages have unique titles and meta descriptions");
+  }
+
+  const evidence = [
+    ...dupTitles.slice(0, 3).map(([t, u]) => `Duplicate title "${t.slice(0, 80)}" on ${u.length} pages`),
+    ...dupMetas.slice(0, 3).map(([d, u]) => `Duplicate meta "${d.slice(0, 60)}…" on ${u.length} pages`),
+  ];
+  const affectedUrls = [
+    ...new Set([
+      ...dupTitles.flatMap(([, u]) => u),
+      ...dupMetas.flatMap(([, u]) => u),
+    ]),
+  ];
+
+  if (dupTitles.length > 0) {
+    return makeResult(17, "fail", 1, 5, `${dupTitles.length} duplicate title(s)${dupMetas.length ? `, ${dupMetas.length} duplicate meta(s)` : ""}`, {
+      evidence,
+      recommendation: "Make every page title and meta description unique.",
+      affectedUrls: affectedUrls.slice(0, 40),
+      issueCode: evidence.map((e) => `- ${e}`).join("\n"),
+      solutionCode: `export async function generateMetadata({ params }) {\n  const page = await getPage(params.slug);\n  return {\n    title: page.uniqueTitle,\n    description: page.uniqueDescription,\n  };\n}`,
     });
   }
 
-  return makeResult(17, "pass", 5, 5, "No duplicate meta descriptions in crawled pages");
+  return makeResult(17, "warn", 2, 5, `${dupMetas.length} duplicate meta description(s)`, {
+    evidence,
+    recommendation: "Write unique meta descriptions for each page.",
+    affectedUrls: affectedUrls.slice(0, 40),
+    issueCode: evidence.map((e) => `- ${e}`).join("\n"),
+    solutionCode: `<meta name="description" content="Unique summary for this specific page…" />`,
+  });
+}
+
+/** @deprecated Prefer auditDuplicateContent — kept for compatibility. */
+export function auditDuplicateMeta(crawl: CrawlResult): CheckResult {
+  return auditDuplicateContent(crawl);
+}
+
+/** @deprecated Prefer auditDuplicateContent — kept for compatibility. */
+export function auditDuplicateTitles(crawl: CrawlResult): CheckResult {
+  return auditDuplicateContent(crawl);
 }
 
 export function auditArchitectureExtras(crawl: CrawlResult, baseUrl: string): CheckResult[] {
@@ -200,27 +245,4 @@ export function auditOrphanPages(crawl: CrawlResult, baseUrl: string): CheckResu
   }
 
   return makeResult(3, "pass", 5, 5, `Crawl structure healthy (${orphans.length} orphans of ${crawl.allDiscoveredUrls.length} discovered)`);
-}
-
-export function auditDuplicateTitles(crawl: CrawlResult): CheckResult {
-  const titleMap = new Map<string, string[]>();
-  for (const page of crawl.pages) {
-    if (!page.html) continue;
-    const title = getTitle(parseHtml(page.html));
-    if (!title) continue;
-    const existing = titleMap.get(title) || [];
-    existing.push(page.finalUrl);
-    titleMap.set(title, existing);
-  }
-
-  const dupTitles = [...titleMap.entries()].filter(([, urls]) => urls.length > 1);
-  if (dupTitles.length > 0) {
-    return makeResult(17, "fail", 1, 5, `${dupTitles.length} duplicate title tag(s) found`, {
-      evidence: dupTitles.slice(0, 3).map(([t, u]) => `"${t}" on ${u.length} pages`),
-      recommendation: "Make every page title unique.",
-      affectedUrls: dupTitles.flatMap(([, u]) => u),
-    });
-  }
-
-  return makeResult(17, "pass", 5, 5, "All crawled pages have unique titles");
 }

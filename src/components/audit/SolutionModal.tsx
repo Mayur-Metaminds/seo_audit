@@ -1,10 +1,31 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import type { CheckResult } from "@/types/audit.types";
+import type { CheckOccurrence, CheckResult } from "@/types/audit.types";
 import { FRAMEWORK_CHECKPOINTS, PRIORITY_COLORS } from "@/data/framework";
+import { getExplainer } from "@/data/checkpointExplainers";
 import { cn } from "@/lib/utils/cn";
-import { X, MapPin, Lightbulb, Code2, Copy, Check, AlertOctagon, CheckCircle2, Globe, ExternalLink, ChevronLeft, ChevronRight } from "lucide-react";
+import { formatCodeSnippet } from "@/lib/utils/formatCodeSnippet";
+import {
+  X,
+  MapPin,
+  Lightbulb,
+  Code2,
+  Copy,
+  Check,
+  AlertOctagon,
+  CheckCircle2,
+  Globe,
+  ExternalLink,
+  ChevronLeft,
+  ChevronRight,
+  ShieldAlert,
+  ShieldCheck,
+  Gauge,
+  Search,
+  BookOpen,
+  WrapText,
+} from "lucide-react";
 
 interface SolutionModalProps {
   check?: CheckResult;
@@ -14,27 +35,75 @@ interface SolutionModalProps {
   pageUrl?: string;
 }
 
+function resolveOccurrence(check: CheckResult | undefined, urlIndex: number, pageUrl?: string): CheckOccurrence | null {
+  const occurrences = check?.occurrences;
+  if (occurrences && occurrences.length > 0) {
+    return occurrences[Math.min(urlIndex, occurrences.length - 1)] || null;
+  }
+
+  const urls = check?.affectedUrls?.length ? check.affectedUrls : pageUrl ? [pageUrl] : [];
+  const url = urls[urlIndex] || urls[0] || pageUrl || "";
+  if (!url && !check) return null;
+
+  return {
+    url: url || "site-wide",
+    status: check?.status || "fail",
+    message: check?.message || "",
+    evidence: check?.evidence,
+    issueCode: check?.issueCode,
+    solutionCode: check?.solutionCode,
+    recommendation: check?.recommendation,
+    suggestion: check?.suggestion,
+    codeLocation: check?.codeLocation,
+    whyItMatters: check?.whyItMatters,
+    seoImpact: check?.seoImpact,
+    howToVerify: check?.howToVerify,
+    rankingEffect: check?.rankingEffect,
+    confidence: check?.confidence,
+    isGenuineSeoIssue: check?.isGenuineSeoIssue,
+    measuredValue: check?.measuredValue,
+    measuredUnit: check?.measuredUnit,
+  };
+}
+
+const IMPACT_STYLES: Record<string, string> = {
+  critical: "bg-rose-500/15 text-rose-300 border-rose-500/40",
+  high: "bg-orange-500/15 text-orange-300 border-orange-500/40",
+  medium: "bg-amber-500/15 text-amber-200 border-amber-500/40",
+  low: "bg-sky-500/15 text-sky-300 border-sky-500/40",
+  informational: "bg-slate-500/15 text-slate-300 border-slate-500/40",
+};
+
+const CONFIDENCE_LABEL: Record<string, string> = {
+  measured: "Measured (Lighthouse / headless / CrUX)",
+  high: "High confidence",
+  medium: "Medium confidence",
+  low: "Heuristic estimate — confirm with lab tools",
+};
+
 export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }: SolutionModalProps) {
   const [urlIndex, setUrlIndex] = useState(0);
 
   const id = check?.checkpointId || checkpointId;
   const cp = FRAMEWORK_CHECKPOINTS.find((f) => f.id === id);
+  const explainer = id ? getExplainer(id) : undefined;
 
-  const urls = (check?.affectedUrls && check.affectedUrls.length > 0)
-    ? check.affectedUrls
-    : (pageUrl ? [pageUrl] : []);
+  const urls =
+    check?.occurrences && check.occurrences.length > 0
+      ? check.occurrences.map((o) => o.url)
+      : check?.affectedUrls && check.affectedUrls.length > 0
+        ? check.affectedUrls
+        : pageUrl
+          ? [pageUrl]
+          : [];
 
-  // Reset active item index when check or checkpointId changes
   useEffect(() => {
     setUrlIndex(0);
   }, [check, checkpointId]);
 
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
+    if (isOpen) document.body.style.overflow = "hidden";
+    else document.body.style.overflow = "";
     return () => {
       document.body.style.overflow = "";
     };
@@ -42,43 +111,82 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
 
   if (!isOpen) return null;
 
-  const activeUrl = urls[urlIndex] || pageUrl || "";
-  const activeUrlPath = activeUrl ? activeUrl.replace(/^https?:\/\/[^/]+/, "") || "/" : "";
+  const occurrence = resolveOccurrence(check, urlIndex, pageUrl);
+  const activeUrl = occurrence?.url || urls[urlIndex] || pageUrl || "";
+  const activeUrlPath =
+    activeUrl && activeUrl !== "site-wide" ? activeUrl.replace(/^https?:\/\/[^/]+/, "") || "/" : "";
 
-  const location = check?.codeLocation || cp?.codeLocation || "Source HTML / Component template";
-  const suggestion = check?.suggestion || cp?.suggestion || check?.recommendation || cp?.description;
+  const location =
+    occurrence?.codeLocation || check?.codeLocation || cp?.codeLocation || "Source HTML / Component template";
+  const suggestion =
+    occurrence?.suggestion ||
+    occurrence?.recommendation ||
+    check?.suggestion ||
+    cp?.suggestion ||
+    check?.recommendation ||
+    cp?.description;
 
-  const baseIssueCode = check?.issueCode || cp?.issueCode || "<!-- Issue present: element missing or invalid -->";
-  const baseSolutionCode = check?.solutionCode || cp?.solutionCode;
+  const whyItMatters = occurrence?.whyItMatters || check?.whyItMatters || explainer?.whyItMatters;
+  const rankingEffect = occurrence?.rankingEffect || check?.rankingEffect || explainer?.rankingEffect;
+  const howToVerify = occurrence?.howToVerify || check?.howToVerify || explainer?.howToVerify;
+  const seoImpact = occurrence?.seoImpact || check?.seoImpact || explainer?.seoImpact || cp?.priority || "medium";
+  const confidence = occurrence?.confidence || check?.confidence || "medium";
+  const isGenuine =
+    occurrence?.isGenuineSeoIssue ??
+    check?.isGenuineSeoIssue ??
+    (check?.status === "fail" || check?.status === "warn");
 
-  // Add specific page URL header comment if multiple occurrences exist
-  const issueCode = urls.length > 1
-    ? `<!-- Occurrence #${urlIndex + 1} on Page: ${activeUrlPath} -->\n${baseIssueCode}`
-    : baseIssueCode;
+  const baseIssueCode =
+    occurrence?.issueCode || check?.issueCode || cp?.issueCode || "<!-- Issue present: element missing or invalid -->";
+  const baseSolutionCode = occurrence?.solutionCode || check?.solutionCode || cp?.solutionCode;
 
-  const solutionCode = baseSolutionCode && urls.length > 1
-    ? `<!-- Corrected Solution for Page #${urlIndex + 1}: ${activeUrlPath} -->\n${baseSolutionCode}`
-    : baseSolutionCode;
+  const issueCode =
+    urls.length > 1
+      ? `<!-- Occurrence #${urlIndex + 1} on Page: ${activeUrlPath || activeUrl} -->\n${baseIssueCode}`
+      : baseIssueCode;
+
+  const solutionCode =
+    baseSolutionCode && urls.length > 1
+      ? `<!-- Corrected Solution for Page #${urlIndex + 1}: ${activeUrlPath || activeUrl} -->\n${baseSolutionCode}`
+      : baseSolutionCode;
+
+  const detectedMessage = occurrence?.message || check?.message;
+  const detectedEvidence = occurrence?.evidence || check?.evidence;
+  const measured =
+    occurrence?.measuredValue != null
+      ? `${occurrence.measuredValue}${occurrence.measuredUnit === "cls" ? "" : occurrence.measuredUnit === "ms" ? "ms" : ` ${occurrence.measuredUnit || ""}`}`
+      : check?.measuredValue != null
+        ? `${check.measuredValue}${check.measuredUnit === "ms" ? "ms" : ""}`
+        : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
       <div className="relative w-full max-w-6xl max-h-[92vh] flex flex-col rounded-2xl border border-card-border bg-card shadow-2xl overflow-hidden">
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-card-border bg-background/70 shrink-0">
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-mono font-bold text-accent bg-accent/10 border border-accent/20 px-2.5 py-1 rounded-md">
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="text-xs font-mono font-bold text-accent bg-accent/10 border border-accent/20 px-2.5 py-1 rounded-md shrink-0">
               #{id}
             </span>
-            <div>
-              <h3 className="text-lg font-bold text-foreground tracking-tight">
+            <div className="min-w-0">
+              <h3 className="text-lg font-bold text-foreground tracking-tight truncate">
                 {cp?.name || check?.message || `Issue #${id}`}
               </h3>
               {cp && (
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className={cn("text-[11px] px-2.5 py-0.5 rounded-full border capitalize font-semibold", PRIORITY_COLORS[cp.priority])}>
+                <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                  <span
+                    className={cn(
+                      "text-[11px] px-2.5 py-0.5 rounded-full border capitalize font-semibold",
+                      PRIORITY_COLORS[cp.priority]
+                    )}
+                  >
                     {cp.priority} Priority
                   </span>
                   <span className="text-xs text-muted capitalize font-medium">• {cp.category.replace("-", " ")}</span>
+                  {measured && (
+                    <span className="text-[11px] font-mono px-2 py-0.5 rounded-full border border-card-border bg-background/80 text-foreground">
+                      Measured: {measured}
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -87,22 +195,22 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl hover:bg-background/80 text-muted hover:text-foreground transition-colors"
+            className="p-2 rounded-xl hover:bg-background/80 text-muted hover:text-foreground transition-colors shrink-0"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Multi-Item Stepper Bar */}
         {urls.length > 1 && (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-6 py-2.5 bg-accent/5 border-b border-card-border shrink-0">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-foreground">Multiple Occurrences ({urls.length} pages affected):</span>
+              <span className="text-xs font-semibold text-foreground">
+                Multiple Occurrences ({urls.length} pages affected):
+              </span>
               <span className="text-xs font-mono font-bold text-accent bg-card px-2.5 py-0.5 rounded-md border border-card-border shadow-sm">
                 Item {urlIndex + 1} of {urls.length}
               </span>
             </div>
-
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
@@ -111,126 +219,176 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
                 className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg border border-card-border bg-card text-foreground hover:bg-card-border/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronLeft className="h-4 w-4" />
-                <span>Previous Page</span>
+                Previous Page
               </button>
-
               <button
                 type="button"
                 disabled={urlIndex >= urls.length - 1}
                 onClick={() => setUrlIndex((prev) => Math.min(prev + 1, urls.length - 1))}
                 className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
               >
-                <span>Next Page</span>
+                Next Page
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
           </div>
         )}
 
-        {/* Side-by-side 2 Column Body */}
         <div className="p-6 overflow-y-auto grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* LEFT COLUMN: Problem / Issue Code */}
           <div className="space-y-4 flex flex-col">
-            {/* Page URL & Code Location */}
+            {/* Verdict: genuine SEO impact */}
+            <div
+              className={cn(
+                "rounded-xl border p-4 space-y-3",
+                isGenuine ? "bg-danger/10 border-danger/30" : "bg-emerald-950/20 border-emerald-500/30"
+              )}
+            >
+              <div className="flex items-start gap-3">
+                {isGenuine ? (
+                  <ShieldAlert className="h-5 w-5 text-danger shrink-0 mt-0.5" />
+                ) : (
+                  <ShieldCheck className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />
+                )}
+                <div className="space-y-2 min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted">SEO Verdict</p>
+                  <p className="text-sm font-semibold text-foreground">
+                    {check?.status === "warn"
+                      ? "Warning — recommended improvement (solution included)"
+                      : isGenuine
+                        ? "Genuine SEO issue — worth fixing"
+                        : "Informational / heuristic — validate before large changes"}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <span className={cn("text-[11px] px-2.5 py-0.5 rounded-full border capitalize font-semibold", IMPACT_STYLES[seoImpact] || IMPACT_STYLES.medium)}>
+                      Impact: {seoImpact}
+                    </span>
+                    <span className="text-[11px] px-2.5 py-0.5 rounded-full border border-card-border bg-background/60 text-foreground font-medium">
+                      {CONFIDENCE_LABEL[confidence] || confidence}
+                    </span>
+                  </div>
+                  {rankingEffect && (
+                    <p className="text-xs text-muted leading-relaxed">
+                      <span className="font-semibold text-foreground">Ranking effect: </span>
+                      {rankingEffect}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {whyItMatters && (
+              <div className="rounded-xl border border-card-border bg-background/60 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-accent uppercase tracking-wider">
+                  <BookOpen className="h-3.5 w-3.5" />
+                  Why this matters
+                </div>
+                <p className="text-xs text-foreground/90 leading-relaxed">{whyItMatters}</p>
+                {explainer?.commonFalsePositives && (
+                  <p className="text-[11px] text-muted leading-relaxed border-t border-card-border pt-2">
+                    <span className="font-semibold text-foreground">Watch for false positives: </span>
+                    {explainer.commonFalsePositives}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {/* Location Badge */}
               <div className="rounded-xl border border-card-border bg-background/60 p-3.5 space-y-1">
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-accent uppercase tracking-wider">
                   <MapPin className="h-3.5 w-3.5" />
-                  <span>Code Location</span>
+                  Where to look
                 </div>
                 <p className="text-xs font-mono font-semibold text-foreground bg-card p-2 rounded-lg border border-card-border truncate">
                   {location}
                 </p>
               </div>
 
-              {/* Page URL Badge */}
               <div className="rounded-xl border border-card-border bg-background/60 p-3.5 space-y-1">
                 <div className="flex items-center justify-between text-xs font-semibold text-accent uppercase tracking-wider">
                   <div className="flex items-center gap-1.5">
                     <Globe className="h-3.5 w-3.5" />
-                    <span>Active Page URL</span>
+                    Active Page URL
                   </div>
                   {urls.length > 1 && (
-                    <span className="text-[10px] font-mono text-muted">#{urlIndex + 1}/{urls.length}</span>
+                    <span className="text-[10px] font-mono text-muted">
+                      #{urlIndex + 1}/{urls.length}
+                    </span>
                   )}
                 </div>
-
-                {activeUrl ? (
+                {activeUrl && activeUrl !== "site-wide" ? (
                   <a
                     href={activeUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center justify-between text-xs font-mono text-foreground hover:text-accent bg-card p-2 rounded-lg border border-card-border/80 transition-colors group truncate"
                   >
-                    <span className="truncate">{activeUrlPath}</span>
+                    <span className="truncate">{activeUrlPath || activeUrl}</span>
                     <ExternalLink className="h-3 w-3 shrink-0 opacity-60 group-hover:opacity-100 ml-1.5" />
                   </a>
                 ) : (
-                  <p className="text-xs font-mono text-muted bg-card p-2 rounded-lg border border-card-border">Site-wide / Global</p>
+                  <p className="text-xs font-mono text-muted bg-card p-2 rounded-lg border border-card-border">
+                    Site-wide / Global
+                  </p>
                 )}
               </div>
             </div>
 
-            {/* Audit Finding */}
-            {check?.message && (
+            {detectedMessage && (
               <div className="rounded-xl bg-danger/10 border border-danger/30 p-4 space-y-2">
-                <p className="text-xs text-danger font-semibold uppercase tracking-wider">Detected Issue</p>
-                <p className="text-sm font-medium text-foreground leading-relaxed">{check.message}</p>
-
-                {check.evidence && check.evidence.length > 0 && (
+                <p className="text-xs text-danger font-semibold uppercase tracking-wider">What we found</p>
+                <p className="text-sm font-medium text-foreground leading-relaxed">{detectedMessage}</p>
+                {detectedEvidence && detectedEvidence.length > 0 && (
                   <div className="mt-2 text-xs font-mono text-muted bg-slate-950/80 rounded p-2.5 overflow-x-auto space-y-1 border border-card-border">
-                    {check.evidence.map((ev, i) => (
-                      <div key={i} className="truncate">• {ev}</div>
+                    {detectedEvidence.map((ev, i) => (
+                      <div key={i} className="whitespace-pre-wrap break-all">
+                        • {ev}
+                      </div>
                     ))}
                   </div>
                 )}
               </div>
             )}
 
-            {/* Problem Code Box (Diff Viewer) */}
-            <div className="rounded-xl border border-danger/40 bg-slate-950 text-slate-100 overflow-hidden shadow-inner flex-1 flex flex-col min-h-[220px]">
+            <div className="rounded-xl border border-danger/40 bg-slate-950 text-slate-100 overflow-hidden shadow-inner flex-1 flex flex-col min-h-[200px]">
               <div className="flex items-center justify-between px-4 py-2.5 bg-danger/20 border-b border-danger/30 text-xs font-semibold text-danger shrink-0">
                 <div className="flex items-center gap-2">
                   <AlertOctagon className="h-4 w-4 text-danger" />
-                  <span>Problematic Code Context (Item #{urlIndex + 1})</span>
+                  <span>Problematic Code / Evidence</span>
                 </div>
-                {urls.length > 1 && (
-                  <span className="text-[10px] font-mono text-muted">Page {urlIndex + 1} of {urls.length}</span>
-                )}
               </div>
-              
-              <DiffCodeBlock
-                code={issueCode}
-                type="issue"
-                onCopy={(txt) => navigator.clipboard.writeText(txt)}
-              />
+              <DiffCodeBlock code={issueCode} type="issue" onCopy={(txt) => navigator.clipboard.writeText(txt)} />
             </div>
           </div>
 
-          {/* RIGHT COLUMN: Solution & Corrected Code */}
           <div className="space-y-4 flex flex-col">
-            {/* Actionable Suggestion */}
             {suggestion && (
               <div className="rounded-xl border border-accent/30 bg-accent/10 p-4 space-y-1.5">
                 <div className="flex items-center gap-2 text-xs font-semibold text-accent uppercase tracking-wider">
                   <Lightbulb className="h-4 w-4" />
-                  <span>Fix Suggestion</span>
+                  How to fix
                 </div>
                 <p className="text-xs text-foreground/90 leading-relaxed font-medium">{suggestion}</p>
               </div>
             )}
 
-            {/* Solution Code Box (Diff Viewer) */}
+            {howToVerify && (
+              <div className="rounded-xl border border-card-border bg-background/60 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-foreground uppercase tracking-wider">
+                  <Search className="h-3.5 w-3.5 text-accent" />
+                  How to verify (independently)
+                </div>
+                <p className="text-xs text-muted leading-relaxed">{howToVerify}</p>
+              </div>
+            )}
+
             {solutionCode && (
-              <div className="rounded-xl border border-emerald-500/40 bg-slate-950 text-slate-100 overflow-hidden shadow-inner flex-1 flex flex-col min-h-[220px]">
+              <div className="rounded-xl border border-emerald-500/40 bg-slate-950 text-slate-100 overflow-hidden shadow-inner flex-1 flex flex-col min-h-[200px]">
                 <div className="flex items-center justify-between px-4 py-2.5 bg-emerald-950/40 border-b border-emerald-500/30 shrink-0">
                   <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
                     <Code2 className="h-4 w-4" />
-                    <span>Corrected Solution Code Context (Item #{urlIndex + 1})</span>
+                    Corrected pattern (adapt to your stack)
                   </div>
                 </div>
-
                 <DiffCodeBlock
                   code={solutionCode}
                   type="solution"
@@ -239,23 +397,29 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
               </div>
             )}
 
-            {/* Verification Steps */}
             <div className="rounded-xl bg-emerald-950/20 border border-emerald-500/30 p-3.5 flex items-start gap-2.5 shrink-0">
               <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
               <div className="text-xs text-slate-300 space-y-1">
-                <p className="font-semibold text-emerald-400">Verification Steps:</p>
-                <p>1. Search for <span className="font-mono text-amber-300">{location}</span> in your IDE.</p>
-                <p>2. Copy the corrected code snippet above and replace the issue line.</p>
-                <p>3. Save file & re-run audit to confirm it passes!</p>
+                <p className="font-semibold text-emerald-400 flex items-center gap-1.5">
+                  <Gauge className="h-3.5 w-3.5" />
+                  Verification checklist
+                </p>
+                <p>1. Open the affected URL and confirm the finding in DevTools / view-source.</p>
+                <p>2. Apply the fix in the template/CMS for that page type (not only one URL if it is a pattern).</p>
+                <p>3. Re-run this audit — measured checks (PSI/headless) should clear or improve.</p>
+                {(id === 21 || (id && id >= 27 && id <= 33)) && (
+                  <p>4. Cross-check with Google PageSpeed Insights and Search Console → Core Web Vitals.</p>
+                )}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Footer */}
         <div className="px-6 py-4 border-t border-card-border bg-background/70 flex items-center justify-between shrink-0">
           <p className="text-xs text-muted font-mono">
-            {urls.length > 1 ? `Viewing Item ${urlIndex + 1} of ${urls.length}` : "SEO Audit Code Fix & Solution Viewer"}
+            {urls.length > 1
+              ? `Viewing Item ${urlIndex + 1} of ${urls.length}`
+              : "Enterprise SEO finding · evidence-backed"}
           </p>
           <button
             type="button"
@@ -281,40 +445,25 @@ function DiffCodeBlock({
 }) {
   const [copiedPill, setCopiedPill] = useState<string | null>(null);
   const [copiedFull, setCopiedFull] = useState(false);
+  const [wordWrap, setWordWrap] = useState(true);
+  const formattedCode = formatCodeSnippet(code);
+  const lines = formattedCode.split("\n");
 
-  const lines = code.split("\n");
-
-  // Extract all unique class names for quick IDE search
   const extractedClassNames = (() => {
-    const matches = code.matchAll(/class(?:Name)?=["']([^"']+)["']/g);
+    const matches = formattedCode.matchAll(/class(?:Name)?=["']([^"']+)["']/g);
     const set = new Set<string>();
     for (const m of matches) {
       if (m[1]) {
         m[1].split(/\s+/).forEach((cls) => {
-          if (cls.length > 2 && !cls.includes("<") && !cls.includes(">")) {
-            set.add(cls);
-          }
+          if (cls.length > 2 && !cls.includes("<") && !cls.includes(">")) set.add(cls);
         });
       }
     }
     return Array.from(set).slice(0, 6);
   })();
 
-  const handleCopyPill = (clsName: string) => {
-    navigator.clipboard.writeText(clsName);
-    setCopiedPill(clsName);
-    setTimeout(() => setCopiedPill(null), 2000);
-  };
-
-  const handleCopyFull = () => {
-    onCopy(code);
-    setCopiedFull(true);
-    setTimeout(() => setCopiedFull(false), 2000);
-  };
-
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-slate-950">
-      {/* Chrome DevTools Search Helper Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3.5 py-2 bg-slate-900/90 border-b border-slate-800 text-[11px] font-mono text-slate-400 shrink-0">
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-slate-500 font-semibold">DevTools Class Search:</span>
@@ -323,42 +472,79 @@ function DiffCodeBlock({
               <button
                 key={cls}
                 type="button"
-                onClick={() => handleCopyPill(cls)}
+                onClick={() => {
+                  navigator.clipboard.writeText(cls);
+                  setCopiedPill(cls);
+                  setTimeout(() => setCopiedPill(null), 2000);
+                }}
                 className={cn(
                   "px-2 py-0.5 rounded border transition-colors flex items-center gap-1 font-semibold",
                   copiedPill === cls
                     ? "bg-emerald-950 text-emerald-300 border-emerald-500"
-                    : "bg-slate-800 text-amber-300 border-slate-700 hover:bg-slate-700 hover:text-amber-200"
+                    : "bg-slate-800 text-amber-300 border-slate-700 hover:bg-slate-700"
                 )}
-                title="Click to copy class name for Ctrl+Shift+F IDE search"
               >
                 {copiedPill === cls ? <Check className="h-3 w-3 text-emerald-400" /> : null}
                 <span>{cls}</span>
               </button>
             ))
           ) : (
-            <span className="text-slate-500 italic">Use code tags below</span>
+            <span className="text-slate-500 italic">Use tags / metrics below</span>
           )}
         </div>
-
-        <button
-          type="button"
-          onClick={handleCopyFull}
-          className="self-end sm:self-auto px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold transition-colors flex items-center gap-1 shrink-0"
-        >
-          {copiedFull ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
-          <span>{copiedFull ? "Copied Code!" : "Copy Code"}</span>
-        </button>
+        <div className="flex items-center gap-1.5 self-end sm:self-auto shrink-0">
+          <button
+            type="button"
+            onClick={() => setWordWrap((w) => !w)}
+            title={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+            className={cn(
+              "px-2.5 py-1 rounded font-semibold transition-colors flex items-center gap-1",
+              wordWrap
+                ? "bg-accent/20 text-accent border border-accent/40"
+                : "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-transparent"
+            )}
+          >
+            <WrapText className="h-3 w-3" />
+            <span>{wordWrap ? "Wrap on" : "Wrap off"}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onCopy(formattedCode);
+              setCopiedFull(true);
+              setTimeout(() => setCopiedFull(false), 2000);
+            }}
+            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold transition-colors flex items-center gap-1"
+          >
+            {copiedFull ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+            <span>{copiedFull ? "Copied!" : "Copy"}</span>
+          </button>
+        </div>
       </div>
 
-      {/* Code Table with Line Numbers (Chrome DevTools Inspector Style) */}
-      <div className="p-0 font-mono text-xs leading-relaxed overflow-x-auto flex-1 bg-slate-950">
-        <table className="w-full border-collapse">
+      <div
+        className={cn(
+          "p-0 font-mono text-xs leading-relaxed flex-1 bg-slate-950",
+          wordWrap ? "overflow-x-hidden" : "overflow-x-auto"
+        )}
+      >
+        <table className="w-full border-collapse table-fixed">
           <tbody>
             {lines.map((line, idx) => {
               const trimmed = line.trim();
-              const isRemoved = type === "issue" && (trimmed.startsWith("-") || line.includes("<!-- Issue") || line.includes("<!-- Missing") || line.includes("<!-- Broken"));
-              const isAdded = type === "solution" && (trimmed.startsWith("+") || line.includes("<!-- Corrected") || line.includes("<!-- Solution") || line.includes("<!-- Fixed"));
+              const isRemoved =
+                type === "issue" &&
+                (trimmed.startsWith("-") ||
+                  line.includes("<!-- Issue") ||
+                  line.includes("<!-- Missing") ||
+                  line.includes("H1s on") ||
+                  line.includes("Server response"));
+              const isAdded =
+                type === "solution" &&
+                (trimmed.startsWith("+") ||
+                  line.includes("<!-- Corrected") ||
+                  line.includes("Exactly one H1") ||
+                  line.includes("fetchpriority"));
 
               return (
                 <tr
@@ -368,29 +554,28 @@ function DiffCodeBlock({
                     isRemoved
                       ? "bg-rose-950/40 text-rose-300 font-semibold border-l-2 border-rose-500"
                       : isAdded
-                      ? "bg-emerald-950/40 text-emerald-300 font-semibold border-l-2 border-emerald-500"
-                      : "hover:bg-slate-900/60 text-slate-300 border-l-2 border-transparent"
+                        ? "bg-emerald-950/40 text-emerald-300 font-semibold border-l-2 border-emerald-500"
+                        : "hover:bg-slate-900/60 text-slate-300 border-l-2 border-transparent"
                   )}
                 >
-                  <td className="w-9 select-none text-right pr-2 text-slate-600 text-[11px] border-r border-slate-800/80 bg-slate-950/80 py-1 font-mono">
+                  <td className="w-9 select-none text-right pr-2 text-slate-600 text-[11px] border-r border-slate-800/80 bg-slate-950/80 py-1 font-mono align-top">
                     {idx + 1}
                   </td>
-
-                  <td className="w-5 select-none text-center font-bold text-xs py-1">
-                    {trimmed.startsWith("-") ? (
+                  <td className="w-5 select-none text-center font-bold text-xs py-1 align-top">
+                    {trimmed.startsWith("-") || isRemoved ? (
                       <span className="text-rose-400">-</span>
-                    ) : trimmed.startsWith("+") ? (
-                      <span className="text-emerald-400">+</span>
-                    ) : isRemoved ? (
-                      <span className="text-rose-400">-</span>
-                    ) : isAdded ? (
+                    ) : trimmed.startsWith("+") || isAdded ? (
                       <span className="text-emerald-400">+</span>
                     ) : (
                       <span className="text-slate-700"> </span>
                     )}
                   </td>
-
-                  <td className="py-1 px-3 whitespace-pre">
+                  <td
+                    className={cn(
+                      "py-1 px-3",
+                      wordWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"
+                    )}
+                  >
                     {line.replace(/^[+-]\s?/, "")}
                   </td>
                 </tr>

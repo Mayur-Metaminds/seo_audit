@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, Search, Shield, Zap, FileCheck2 } from "lucide-react";
-import type { AuditProgressEvent } from "@/lib/audit/runAudit";
+import type { AuditProgressEvent } from "@/types/progress.types";
+import { Loader2, Search, Shield, Zap, FileCheck2, MonitorPlay, Gauge, SpellCheck } from "lucide-react";
 
 const PHASE_META: Record<string, { label: string; icon: typeof Search }> = {
   initializing: { label: "Initializing", icon: Loader2 },
   crawling: { label: "Crawling pages", icon: Search },
   security: { label: "Security checks", icon: Shield },
+  rendering: { label: "Headless render (SEO DOM)", icon: MonitorPlay },
+  pagespeed: { label: "Google PageSpeed / Lighthouse", icon: Gauge },
   auditing: { label: "Auditing pages", icon: Zap },
+  grammar: { label: "Grammar tips (not scored)", icon: SpellCheck },
   finalizing: { label: "Building report", icon: FileCheck2 },
   complete: { label: "Complete", icon: FileCheck2 },
   failed: { label: "Failed", icon: Shield },

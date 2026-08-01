@@ -23,6 +23,27 @@ export interface FrameworkCheckpoint {
   solutionCode?: string;
 }
 
+/** Per-URL finding preserved through aggregation so the UI can show the real issue per page. */
+export interface CheckOccurrence {
+  url: string;
+  status: CheckStatus;
+  message: string;
+  evidence?: string[];
+  issueCode?: string;
+  solutionCode?: string;
+  recommendation?: string;
+  suggestion?: string;
+  codeLocation?: string;
+  whyItMatters?: string;
+  seoImpact?: "critical" | "high" | "medium" | "low" | "informational";
+  howToVerify?: string;
+  rankingEffect?: string;
+  confidence?: "measured" | "high" | "medium" | "low";
+  isGenuineSeoIssue?: boolean;
+  measuredValue?: number;
+  measuredUnit?: string;
+}
+
 export interface CheckResult {
   checkpointId: number;
   status: CheckStatus;
@@ -37,6 +58,17 @@ export interface CheckResult {
   issueCode?: string;
   suggestion?: string;
   solutionCode?: string;
+  /** Page-level details; preferred source for SolutionModal when multiple URLs are affected. */
+  occurrences?: CheckOccurrence[];
+  whyItMatters?: string;
+  seoImpact?: "critical" | "high" | "medium" | "low" | "informational";
+  howToVerify?: string;
+  rankingEffect?: string;
+  confidence?: "measured" | "high" | "medium" | "low";
+  /** True when this finding meaningfully affects SEO (vs heuristic noise). */
+  isGenuineSeoIssue?: boolean;
+  measuredValue?: number;
+  measuredUnit?: string;
 }
 
 export interface PageAuditResult {
@@ -90,7 +122,27 @@ export interface AuditReport {
     topIssues: string[];
     strengths: string[];
   };
+  /** Advisory writing/grammar tips — never included in score. */
+  grammarSuggestions?: GrammarPageSuggestions[];
+  grammarError?: string;
   error?: string;
+}
+
+export interface GrammarSuggestion {
+  message: string;
+  shortMessage?: string;
+  context: string;
+  replacements: string[];
+  ruleId?: string;
+  category?: string;
+  offset?: number;
+  length?: number;
+}
+
+export interface GrammarPageSuggestions {
+  url: string;
+  suggestions: GrammarSuggestion[];
+  textSampleChars?: number;
 }
 
 export interface AuditConfig {
@@ -104,6 +156,11 @@ export interface CrawledPage {
   finalUrl: string;
   statusCode: number;
   html: string;
+  /** Original fetch HTML before headless render (when rendered=true). */
+  rawHtml?: string;
+  /** True when html was replaced with post-JS Chromium DOM. */
+  rendered?: boolean;
+  renderMs?: number;
   headers: Record<string, string>;
   responseTimeMs: number;
   ttfbMs: number;
@@ -112,6 +169,8 @@ export interface CrawledPage {
   redirectStatuses: number[];
   contentType: string;
   error?: string;
+  /** Google PSI / Lighthouse lab + optional CrUX field metrics. */
+  labMetrics?: import("@/lib/performance/pagespeed").LabMetrics;
 }
 
 export interface RobotsTxtInfo {

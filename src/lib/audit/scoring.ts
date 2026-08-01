@@ -1,5 +1,54 @@
-import type { AuditCategory, AuditReport, CategoryScore, CheckResult, PageAuditResult } from "@/types/audit.types";
+import type { AuditCategory, AuditReport, CategoryScore, CheckOccurrence, CheckResult, PageAuditResult } from "@/types/audit.types";
 import { CATEGORY_LABELS, FRAMEWORK_CHECKPOINTS, getGrade, getCategoryMaxScores, getTotalMaxScore } from "@/data/framework";
+
+function normalizeMessageKey(message: string): string {
+  return message.replace(/\d+/g, "N").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function summarizeFailMessages(fails: CheckResult[]): string {
+  if (fails.length === 0) return "";
+  if (fails.length === 1) return fails[0].message;
+
+  const groups = new Map<string, { sample: string; count: number }>();
+  for (const fail of fails) {
+    const key = normalizeMessageKey(fail.message);
+    const existing = groups.get(key);
+    if (existing) existing.count += 1;
+    else groups.set(key, { sample: fail.message, count: 1 });
+  }
+
+  if (groups.size === 1) {
+    const only = [...groups.values()][0];
+    return `${only.sample} (${fails.length} pages)`;
+  }
+
+  const parts = [...groups.values()].map((g) => `${g.count}× ${g.sample}`);
+  return `${fails.length} pages with issues: ${parts.join("; ")}`;
+}
+
+function toOccurrence(check: CheckResult): CheckOccurrence | null {
+  const url = check.affectedUrls?.[0];
+  if (!url) return null;
+  return {
+    url,
+    status: check.status,
+    message: check.message,
+    evidence: check.evidence,
+    issueCode: check.issueCode,
+    solutionCode: check.solutionCode,
+    recommendation: check.recommendation,
+    suggestion: check.suggestion,
+    codeLocation: check.codeLocation,
+    whyItMatters: check.whyItMatters,
+    seoImpact: check.seoImpact,
+    howToVerify: check.howToVerify,
+    rankingEffect: check.rankingEffect,
+    confidence: check.confidence,
+    isGenuineSeoIssue: check.isGenuineSeoIssue,
+    measuredValue: check.measuredValue,
+    measuredUnit: check.measuredUnit,
+  };
+}
 
 export function aggregateChecks(allChecks: CheckResult[]): Map<number, CheckResult> {
   const byCheckpoint = new Map<number, CheckResult[]>();
@@ -29,22 +78,62 @@ export function aggregateChecks(allChecks: CheckResult[]): Map<number, CheckResu
     const avgScore =
       scorable.length > 0 ? scorable.reduce((sum, c) => sum + c.score, 0) / scorable.length : checks[0]?.score || 0;
     const maxScore = checks[0]?.maxScore || 5;
-    const affectedUrls = [...new Set(checks.flatMap((c) => c.affectedUrls || []))];
+
+    const problemChecks = fails.length > 0 ? fails : warns.length > 0 ? warns : [];
+    const affectedUrls = [...new Set(problemChecks.flatMap((c) => c.affectedUrls || []))];
+
+    const occurrences: CheckOccurrence[] = [];
+    const seenUrls = new Set<string>();
+    for (const check of problemChecks) {
+      if (check.occurrences?.length) {
+        for (const occ of check.occurrences) {
+          if (seenUrls.has(occ.url)) continue;
+          seenUrls.add(occ.url);
+          occurrences.push(occ);
+        }
+      } else {
+        const occ = toOccurrence(check);
+        if (occ && !seenUrls.has(occ.url)) {
+          seenUrls.add(occ.url);
+          occurrences.push(occ);
+        }
+      }
+    }
+
+    const primary = problemChecks[0] || manuals[0] || passes[0] || checks[0];
+    const problemEvidence = [...new Set(problemChecks.flatMap((c) => c.evidence || []))].slice(0, 10);
+
+    let message: string;
+    if (fails.length > 0) message = summarizeFailMessages(fails);
+    else if (warns.length > 0) message = summarizeFailMessages(warns);
+    else message = primary?.message || checks[0].message;
 
     aggregated.set(id, {
       checkpointId: id,
       status,
       score: status === "manual" ? maxScore : Math.round(avgScore * 10) / 10,
       maxScore,
-      message: fails[0]?.message || warns[0]?.message || manuals[0]?.message || passes[0]?.message || checks[0].message,
+      message,
       recommendation:
-        fails[0]?.recommendation ||
-        warns[0]?.recommendation ||
-        manuals[0]?.recommendation ||
+        primary?.recommendation ||
         checks.find((c) => c.recommendation)?.recommendation,
-      evidence: [...new Set(checks.flatMap((c) => c.evidence || []))].slice(0, 10),
-      affectedUrls: affectedUrls.slice(0, 20),
+      suggestion: primary?.suggestion || checks.find((c) => c.suggestion)?.suggestion,
+      evidence: problemEvidence.length > 0 ? problemEvidence : primary?.evidence?.slice(0, 10),
+      affectedUrls: affectedUrls.slice(0, 50),
       scope: checks.some((c) => c.scope === "site") ? "site" : "page",
+      codeLocation: primary?.codeLocation,
+      issueCode: occurrences.length === 1 ? occurrences[0].issueCode || primary?.issueCode : primary?.issueCode,
+      solutionCode:
+        occurrences.length === 1 ? occurrences[0].solutionCode || primary?.solutionCode : primary?.solutionCode,
+      occurrences: occurrences.slice(0, 50),
+      whyItMatters: primary?.whyItMatters,
+      seoImpact: primary?.seoImpact,
+      howToVerify: primary?.howToVerify,
+      rankingEffect: primary?.rankingEffect,
+      confidence: primary?.confidence,
+      isGenuineSeoIssue: primary?.isGenuineSeoIssue,
+      measuredValue: primary?.measuredValue,
+      measuredUnit: primary?.measuredUnit,
     });
   }
 
@@ -155,7 +244,11 @@ export function finalizeReport(
   const totalScore = categoryScores.reduce((sum, c) => sum + c.score, 0);
   const maxScore = getTotalMaxScore();
   const scorableMax = categoryScores.reduce(
-    (sum, cat) => sum + cat.checks.filter((c) => c.status !== "manual" && c.status !== "na").reduce((s, c) => s + c.maxScore, 0),
+    (sum, cat) =>
+      sum +
+      cat.checks
+        .filter((c) => c.status !== "manual" && c.status !== "na")
+        .reduce((s, c) => s + c.maxScore, 0),
     0
   );
   const percentage = scorableMax > 0 ? (totalScore / scorableMax) * 100 : 0;

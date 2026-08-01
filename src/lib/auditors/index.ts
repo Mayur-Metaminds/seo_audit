@@ -2,7 +2,7 @@ import type { CheckResult, CrawledPage } from "@/types/audit.types";
 import type { CrawlResult } from "@/lib/crawler/siteCrawler";
 import {
   getCanonical,
-  getH1s,
+  getH1Elements,
   getHeadings,
   getHreflangTags,
   getImages,
@@ -20,6 +20,9 @@ import {
   extractRealElementSnippet,
 } from "@/lib/utils/html";
 import { getDomain, isSameDomain, resolveUrl, normalizeUrl } from "@/lib/utils/url";
+import { enrichWithExplainer } from "@/data/checkpointExplainers";
+
+export { auditPerformance } from "@/lib/performance/auditPerformance";
 
 function makeResult(
   checkpointId: number,
@@ -29,6 +32,12 @@ function makeResult(
   message: string,
   options?: Partial<CheckResult>
 ): CheckResult {
+  const explained = enrichWithExplainer(checkpointId, status, {
+    confidence: options?.confidence,
+    whyItMatters: options?.whyItMatters,
+    seoImpact: options?.seoImpact,
+    howToVerify: options?.howToVerify,
+  });
   return {
     checkpointId,
     status,
@@ -36,7 +45,9 @@ function makeResult(
     maxScore,
     message,
     scope: options?.scope || "site",
+    ...explained,
     ...options,
+    isGenuineSeoIssue: options?.isGenuineSeoIssue ?? explained.isGenuineSeoIssue,
   };
 }
 
@@ -218,48 +229,114 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
     }));
   }
 
-  // #11 H1
-  const h1s = getH1s($);
-  const realH1 = extractRealElementSnippet($, "h1") || extractRealElementSnippet($, "header") || "<main>\n  <!-- Missing H1 tag -->\n</main>";
-  if (h1s.length === 0) {
-    checks.push(makeResult(11, "fail", 0, 5, "Missing H1 tag", {
-      scope: "page",
-      issueCode: realH1,
-      solutionCode: realH1.includes("<main>")
-        ? realH1.replace("<main>", "<main>\n  <h1 className=\"page-title text-3xl font-bold\">Main Page Title</h1>")
-        : `<h1>Descriptive Page Heading</h1>\n${realH1}`,
-      recommendation: "Add exactly one H1 tag that matches page intent.",
-      affectedUrls: [url],
-    }));
-  } else if (h1s.length > 1) {
-    checks.push(makeResult(11, "fail", 0, 5, `Multiple H1 tags found (${h1s.length})`, {
-      scope: "page",
-      evidence: h1s,
-      issueCode: `- <h1>${h1s[0]}</h1>\n- <h1>${h1s[1]}</h1>`,
-      solutionCode: `+ <h1>${h1s[0]}</h1>\n+ <h2>${h1s[1]}</h2>`,
-      recommendation: "Use exactly one H1 per page. Convert extras to H2.",
-      affectedUrls: [url],
-    }));
+  // #11 H1 — exactly one non-empty H1 per page
+  const h1Elements = getH1Elements($);
+  const h1Texts = h1Elements.map((h) => h.text);
+  const titleFallback = (typeof title === "string" && title.trim()) || "Descriptive Page Heading";
+  const mainSnippet =
+    extractRealElementSnippet($, "main") ||
+    extractRealElementSnippet($, "article") ||
+    extractRealElementSnippet($, "header") ||
+    "<main>\n  <!-- page content -->\n</main>";
+
+  if (h1Elements.length === 0) {
+    const emptyH1Count = $("h1").length;
+    checks.push(
+      makeResult(11, "fail", 0, 5, emptyH1Count > 0 ? "H1 present but empty" : "Missing H1 tag", {
+        scope: "page",
+        evidence: emptyH1Count > 0 ? [`Found ${emptyH1Count} empty <h1> element(s)`] : ["No <h1> elements in HTML"],
+        issueCode: emptyH1Count > 0
+          ? extractRealElementSnippet($, "h1") || "<!-- Empty <h1></h1> -->"
+          : `<!-- Missing H1 on ${url} -->\n${mainSnippet}`,
+        solutionCode: `<!-- Use the page's primary topic as the sole H1 -->\n<main>\n  <h1>${titleFallback}</h1>\n  <!-- Keep section titles as <h2>/<h3>, not additional <h1> -->\n</main>`,
+        recommendation:
+          "Add exactly one visible <h1> near the top of main content that matches the page title/intent. Do not hide the only H1 with sr-only if the visual title is a plain <div>.",
+        suggestion:
+          "Replace decorative title <div>s with a single semantic <h1>, or promote the visible heading to <h1>.",
+        codeLocation: "<main> / page hero heading",
+        affectedUrls: [url],
+        confidence: page.rendered ? "measured" : "high",
+        isGenuineSeoIssue: true,
+      })
+    );
+  } else if (h1Elements.length > 1) {
+    const primary = h1Elements[0];
+    const extras = h1Elements.slice(1);
+    const issueLines = h1Elements
+      .map((h, i) => `- <h1${h.classes ? ` class="${h.classes}"` : ""}>${h.text}</h1>${i === 0 ? "  <!-- keep as H1 -->" : "  <!-- demote to H2 -->"}`)
+      .join("\n");
+    const solutionLines = [
+      `+ <h1>${primary.text}</h1>`,
+      ...extras.map((h) => `+ <h2>${h.text}</h2>`),
+    ].join("\n");
+
+    checks.push(
+      makeResult(11, "fail", 0, 5, `Multiple H1 tags found (${h1Elements.length})`, {
+        scope: "page",
+        evidence: h1Texts.map((t, i) => `H1 #${i + 1}: ${t}`),
+        issueCode: `<!-- ${h1Elements.length} H1s on ${url} — keep one, demote the rest -->\n${issueLines}`,
+        solutionCode: `<!-- Exactly one H1; convert extras to H2 -->\n${solutionLines}`,
+        recommendation: `Keep one primary H1 ("${primary.text.slice(0, 80)}") and convert the other ${extras.length} heading(s) to <h2>/<h3>.`,
+        suggestion: "Section headings inside article body should be <h2>–<h3>, not additional <h1> tags.",
+        codeLocation: "<main> content / CMS rich-text blocks",
+        affectedUrls: [url],
+        confidence: page.rendered ? "measured" : "high",
+        isGenuineSeoIssue: true,
+      })
+    );
+  } else if (h1Elements[0].isVisuallyHidden) {
+    checks.push(
+      makeResult(11, "warn", 3, 5, "Only H1 is visually hidden (e.g. sr-only)", {
+        scope: "page",
+        evidence: [
+          `H1: ${h1Elements[0].text}`,
+          `class="${h1Elements[0].classes}"`,
+          "Visible title may be a non-semantic <div>",
+        ],
+        issueCode: `- ${h1Elements[0].outerHtml}\n<!-- Visual title is likely a styled <div>, not the H1 -->`,
+        solutionCode: `+ <h1 class="text-primary text-[32px] md:text-[36px] font-semibold">${h1Elements[0].text}</h1>\n<!-- Remove duplicate sr-only H1 / title <div> -->`,
+        recommendation:
+          "Make the visible page title the real <h1>. Screen-reader-only H1s are better than none, but search engines and users expect the primary heading to be visible.",
+        suggestion: "Apply the visual title styles to the <h1> and remove the duplicate decorative <div>.",
+        codeLocation: "page hero / title component",
+        affectedUrls: [url],
+        confidence: page.rendered ? "measured" : "high",
+        isGenuineSeoIssue: true,
+      })
+    );
   } else {
-    checks.push(makeResult(11, "pass", 5, 5, "Exactly one H1 tag", { scope: "page", evidence: h1s }));
+    checks.push(
+      makeResult(11, "pass", 5, 5, "Exactly one H1 tag", {
+        scope: "page",
+        evidence: h1Texts,
+        confidence: page.rendered ? "measured" : "high",
+      })
+    );
   }
 
-  // #12 Heading hierarchy
+  // #12 Heading hierarchy (document order)
   const headings = getHeadings($);
-  let hierarchyIssue = false;
-  const levels = headings.map((h) => h.level);
-  for (let i = 1; i < levels.length; i++) {
-    if (levels[i] - levels[i - 1] > 1) {
-      hierarchyIssue = true;
-      break;
+  const skipExamples: string[] = [];
+  for (let i = 1; i < headings.length; i++) {
+    const prev = headings[i - 1].level;
+    const curr = headings[i].level;
+    if (curr - prev > 1) {
+      skipExamples.push(`H${prev} → H${curr}: "${headings[i].text.slice(0, 60)}"`);
     }
   }
   if (headings.length === 0) {
-    checks.push(makeResult(12, "warn", 2, 5, "No heading structure beyond H1", { scope: "page", affectedUrls: [url] }));
-  } else if (hierarchyIssue) {
-    checks.push(makeResult(12, "warn", 3, 5, "Heading hierarchy skips levels", {
+    checks.push(makeResult(12, "warn", 2, 5, "No heading structure found", {
       scope: "page",
+      affectedUrls: [url],
+      recommendation: "Add a logical H1 → H2 → H3 outline for the page content.",
+    }));
+  } else if (skipExamples.length > 0) {
+    checks.push(makeResult(12, "warn", 3, 5, `Heading hierarchy skips levels (${skipExamples.length})`, {
+      scope: "page",
+      evidence: skipExamples.slice(0, 5),
       recommendation: "Maintain logical H1→H2→H3 order without skipping levels.",
+      issueCode: skipExamples.map((s) => `- ${s}`).join("\n"),
+      solutionCode: `<!-- Example outline -->\n<h1>Main Topic</h1>\n<h2>Section</h2>\n<h3>Subsection</h3>`,
       affectedUrls: [url],
     }));
   } else {
@@ -379,15 +456,62 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
     checks.push(makeResult(20, "pass", 5, 5, "Viewport meta tag present", { scope: "page" }));
   }
 
-  // #22 JS rendering
-  if (!hasMainContent($)) {
-    checks.push(makeResult(22, "fail", 0, 5, "Critical content may be JS-rendered", {
-      scope: "page",
-      recommendation: "Ensure H1 and main content are in initial HTML (SSR/SSG).",
-      affectedUrls: [url],
-    }));
+  // #22 JS rendering — compare raw HTML vs headless DOM when available
+  const rawHtml = page.rawHtml;
+  const rawHasMain = rawHtml ? hasMainContent(parseHtml(rawHtml)) : hasMainContent($);
+  const renderedHasMain = page.rendered ? hasMainContent($) : rawHasMain;
+  const rawH1Count = rawHtml ? getH1Elements(parseHtml(rawHtml)).length : getH1Elements($).length;
+  const renderedH1Count = getH1Elements($).length;
+
+  if (!rawHasMain && renderedHasMain) {
+    checks.push(
+      makeResult(22, "fail", 0, 5, "Critical content only appears after JavaScript render", {
+        scope: "page",
+        confidence: page.rendered ? "measured" : "medium",
+        evidence: [
+          page.rendered ? "Compared raw HTTP HTML vs Chromium DOM" : "Based on fetched HTML body text",
+          `Raw HTML main content: missing · Rendered DOM: present`,
+          `H1 count raw/rendered: ${rawH1Count}/${renderedH1Count}`,
+        ],
+        recommendation: "SSR/SSG the H1 and primary article text so crawlers see content without relying on JS execution timing.",
+        issueCode: "<!-- Initial HTML lacks main/article text; content injected client-side -->",
+        solutionCode: `// Prefer Server Components / getStaticProps / SSR so <h1> and body copy ship in first HTML\nexport default async function Page() {\n  const data = await getContent();\n  return <main><h1>{data.title}</h1><article>{data.body}</article></main>;\n}`,
+        affectedUrls: [url],
+        isGenuineSeoIssue: true,
+      })
+    );
+  } else if (!rawHasMain && !renderedHasMain) {
+    checks.push(
+      makeResult(22, "fail", 0, 5, "Critical content missing even after render", {
+        scope: "page",
+        confidence: page.rendered ? "measured" : "medium",
+        evidence: ["No substantial main/article/H1/paragraph text detected"],
+        recommendation: "Ensure H1 and main content are in the HTML response (SSR/SSG).",
+        affectedUrls: [url],
+        isGenuineSeoIssue: true,
+      })
+    );
+  } else if (page.rendered && rawH1Count === 0 && renderedH1Count > 0) {
+    checks.push(
+      makeResult(22, "warn", 3, 5, "H1 injected by client JS (present after render only)", {
+        scope: "page",
+        confidence: "measured",
+        evidence: [`Raw H1s: 0 · Rendered H1s: ${renderedH1Count}`, `Render time: ${page.renderMs ?? "?"}ms`],
+        recommendation: "Include the H1 in the server HTML for faster, more reliable indexing.",
+        affectedUrls: [url],
+        isGenuineSeoIssue: true,
+      })
+    );
   } else {
-    checks.push(makeResult(22, "pass", 5, 5, "Main content present in HTML", { scope: "page" }));
+    checks.push(
+      makeResult(22, "pass", 5, 5, page.rendered ? "Main content in HTML (verified with headless render)" : "Main content present in HTML", {
+        scope: "page",
+        confidence: page.rendered ? "measured" : "medium",
+        evidence: page.rendered
+          ? [`Chromium render OK (${page.renderMs ?? "?"}ms)`, `H1s raw/rendered: ${rawH1Count}/${renderedH1Count}`]
+          : ["Evaluated from HTTP response HTML"],
+      })
+    );
   }
 
   // #18 URL structure
@@ -406,84 +530,6 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
   } else {
     checks.push(makeResult(53, "na", 5, 5, "Breadcrumbs not required for this page depth", { scope: "page" }));
   }
-
-  return checks;
-}
-
-export function auditPerformance(page: CrawledPage): CheckResult[] {
-  const checks: CheckResult[] = [];
-  const $ = parseHtml(page.html);
-  const url = page.finalUrl;
-
-  const ttfb = page.ttfbMs || page.responseTimeMs;
-
-  // #27 TTFB
-  if (ttfb > 1000) {
-    checks.push(makeResult(27, "fail", 0, 5, `TTFB too slow: ${ttfb}ms`, {
-      scope: "page",
-      recommendation: "Target TTFB ≤600ms. Enable caching, CDN, optimise server.",
-      affectedUrls: [url],
-    }));
-  } else if (ttfb > 600) {
-    checks.push(makeResult(27, "warn", 3, 5, `TTFB elevated: ${ttfb}ms`, { scope: "page", affectedUrls: [url] }));
-  } else {
-    checks.push(makeResult(27, "pass", 5, 5, `TTFB good: ${ttfb}ms`, { scope: "page" }));
-  }
-
-  // #28-33 Performance proxies (not real Lighthouse metrics)
-  const pageSizeKb = page.contentLength / 1024;
-  const scripts = $("script").length;
-  const stylesheets = $('link[rel="stylesheet"]').length;
-
-  if (pageSizeKb > 3000) {
-    checks.push(makeResult(28, "fail", 1, 5, `Heavy HTML payload: ${pageSizeKb.toFixed(0)}KB (FCP proxy)`, { scope: "page", affectedUrls: [url] }));
-    checks.push(makeResult(29, "fail", 1, 5, "Large page weight — LCP may be slow (proxy check)", { scope: "page", affectedUrls: [url] }));
-  } else if (pageSizeKb > 1500) {
-    checks.push(makeResult(28, "warn", 3, 5, `Large page: ${pageSizeKb.toFixed(0)}KB`, { scope: "page", affectedUrls: [url] }));
-    checks.push(makeResult(29, "warn", 3, 5, "LCP may be slow — optimise hero image", { scope: "page", affectedUrls: [url] }));
-  } else {
-    checks.push(makeResult(28, "pass", 5, 5, `Page size reasonable: ${pageSizeKb.toFixed(0)}KB`, { scope: "page" }));
-    checks.push(makeResult(29, "pass", 5, 5, "Page weight supports good LCP", { scope: "page" }));
-  }
-
-  // #21 CWV aggregate
-  const images = getImages($);
-  const imagesWithoutDims = images.filter((img) => !img.hasDimensions);
-  if (imagesWithoutDims.length > images.length * 0.5 && images.length > 0) {
-    checks.push(makeResult(31, "fail", 1, 5, `${imagesWithoutDims.length} images without width/height (CLS risk)`, {
-      scope: "page",
-      recommendation: "Add explicit width and height to all images.",
-      affectedUrls: [url],
-    }));
-  } else {
-    checks.push(makeResult(31, "pass", 5, 5, "Image dimensions mostly set (low CLS risk)", { scope: "page" }));
-  }
-
-  // #30 INP / #32 TBT proxy
-  if (scripts > 30) {
-    checks.push(makeResult(30, "fail", 1, 5, `High script count (${scripts}) — INP risk`, { scope: "page", affectedUrls: [url] }));
-    checks.push(makeResult(32, "fail", 1, 5, `High TBT risk: ${scripts} script tags`, { scope: "page", affectedUrls: [url] }));
-  } else if (scripts > 15) {
-    checks.push(makeResult(30, "warn", 3, 5, `Moderate script count (${scripts})`, { scope: "page", affectedUrls: [url] }));
-    checks.push(makeResult(32, "warn", 3, 5, "Consider deferring non-critical JS", { scope: "page", affectedUrls: [url] }));
-  } else {
-    checks.push(makeResult(30, "pass", 4, 5, `Script count acceptable (${scripts})`, { scope: "page" }));
-    checks.push(makeResult(32, "pass", 5, 5, "Low TBT risk", { scope: "page" }));
-  }
-
-  // #33 Speed index proxy
-  if (stylesheets > 10 || pageSizeKb > 2000) {
-    checks.push(makeResult(33, "warn", 3, 5, "Speed Index may be elevated", { scope: "page", affectedUrls: [url] }));
-  } else {
-    checks.push(makeResult(33, "pass", 5, 5, "Speed Index likely acceptable", { scope: "page" }));
-  }
-
-  // #21 CWV summary
-  const cwvFails = checks.filter((c) => [29, 30, 31].includes(c.checkpointId) && c.status === "fail").length;
-  checks.push(makeResult(21, cwvFails > 0 ? "warn" : "pass", cwvFails > 0 ? 5 : 10, 10,
-    cwvFails > 0 ? "Core Web Vitals need improvement (lab estimates)" : "Core Web Vitals look healthy (lab estimates)",
-    { scope: "page", recommendation: "Validate with PageSpeed Insights for field CrUX data." }
-  ));
 
   return checks;
 }

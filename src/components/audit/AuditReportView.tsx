@@ -8,6 +8,7 @@ import { CategoryBreakdown } from "./CategoryBreakdown";
 import { ChecklistResults } from "./ChecklistResults";
 import { PageReportTable } from "./PageReportTable";
 import { RemainingPagesList } from "./RemainingPagesList";
+import { GrammarSuggestionsPanel } from "./GrammarSuggestionsPanel";
 import { loadReport } from "@/lib/audit/reportCache";
 import { generateMarkdownReport } from "@/lib/audit/reportExport";
 import { generatePdfReport } from "@/lib/audit/reportPdf";
@@ -150,10 +151,14 @@ export function AuditReportView({ auditId }: AuditReportViewProps) {
       {error && <p className="text-sm text-danger">{error}</p>}
 
       <ScoreOverview report={report} />
+      <GrammarSuggestionsPanel report={report} />
       <RemainingPagesList report={report} />
       <CategoryBreakdown categories={report.categoryScores} />
       <ChecklistResults categories={report.categoryScores} />
-      <PageReportTable pages={report.pageResults} />
+      <PageReportTable
+        pages={report.pageResults}
+        catalogChecks={report.categoryScores.flatMap((c) => c.checks)}
+      />
     </div>
   );
 }

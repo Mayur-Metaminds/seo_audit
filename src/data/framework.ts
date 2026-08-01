@@ -252,14 +252,18 @@ export const metadata = {
     tools: "Screaming Frog",
     maxScore: 5,
     codeLocation: "<main> content section in page component / template",
-    issueCode: `<!-- Missing H1 tag or multiple H1 tags -->
+    issueCode: `<!-- Example: missing H1 OR multiple H1s on a content page -->
 <main>
-  <!-- <h1> tag missing -->
-  <h2>Welcome to our website</h2>
+  <div class="title">Why Successful People Often Wear Black</div>
+  <h1>Where This Remedy Comes From</h1>
+  <h1>What to Avoid</h1>
 </main>`,
-    suggestion: "Ensure there is exactly one <h1> element per page placed near the top of main content.",
+    suggestion:
+      "Ensure there is exactly one visible <h1> per page near the top of main content. Convert extra section titles to <h2>/<h3>. Prefer a real heading over an sr-only H1 + decorative <div>.",
     solutionCode: `<main>
-  <h1>Automated Technical SEO Audit Platform</h1>
+  <h1>Why Successful People Often Wear Black</h1>
+  <h2>Where This Remedy Comes From</h2>
+  <h2>What to Avoid</h2>
 </main>`,
   },
   {
@@ -437,9 +441,9 @@ add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" alway
     id: 21,
     category: "architecture",
     name: "Core Web Vitals – LCP, INP, CLS",
-    description: "LCP <2.5s, INP <200ms, CLS <0.1 (lab approximations).",
+    description: "LCP ≤2.5s, INP ≤200ms, CLS ≤0.1 — measured via Google PSI (CrUX field + Lighthouse lab).",
     priority: "critical",
-    tools: "CrUX / PageSpeed",
+    tools: "PageSpeed Insights / CrUX / Lighthouse",
     maxScore: 10,
     codeLocation: "frontend layout, images, and font declarations",
     issueCode: `<!-- Layout shift source: missing width/height & un-preloaded hero -->

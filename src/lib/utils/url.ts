@@ -1,7 +1,10 @@
 export function normalizeUrl(input: string): string {
   let url = input.trim();
   if (!/^https?:\/\//i.test(url)) {
-    url = `https://${url}`;
+    const isLocalhost =
+      /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(\/|:|$)/i.test(url) ||
+      /\.(local|internal)(\/|:|$)/i.test(url);
+    url = isLocalhost ? `http://${url}` : `https://${url}`;
   }
   const parsed = new URL(url);
   parsed.hash = "";

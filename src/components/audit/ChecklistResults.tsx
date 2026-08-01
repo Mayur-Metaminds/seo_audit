@@ -6,6 +6,7 @@ import { FRAMEWORK_CHECKPOINTS, STATUS_COLORS, PRIORITY_COLORS } from "@/data/fr
 import { cn } from "@/lib/utils/cn";
 import { ChevronDown, ChevronRight, Code2, Copy, Check, MapPin, Lightbulb } from "lucide-react";
 import { SolutionModal } from "./SolutionModal";
+import { formatCodeSnippet } from "@/lib/utils/formatCodeSnippet";
 
 function CheckItemRow({ check, onOpenModal }: { check: CheckResult; onOpenModal: (c: CheckResult) => void }) {
   const cp = FRAMEWORK_CHECKPOINTS.find((f) => f.id === check.checkpointId);
@@ -14,7 +15,11 @@ function CheckItemRow({ check, onOpenModal }: { check: CheckResult; onOpenModal:
 
   const location = check.codeLocation || cp?.codeLocation;
   const suggestion = check.suggestion || cp?.suggestion || check.recommendation;
-  const solutionCode = check.solutionCode || cp?.solutionCode;
+  const firstOcc = check.occurrences?.[0];
+  const solutionCode = formatCodeSnippet(
+    firstOcc?.solutionCode || check.solutionCode || cp?.solutionCode || ""
+  ) || undefined;
+  const displaySolution = solutionCode?.trim() ? solutionCode : undefined;
 
   const handleCopy = (code: string) => {
     navigator.clipboard.writeText(code);
@@ -94,7 +99,7 @@ function CheckItemRow({ check, onOpenModal }: { check: CheckResult; onOpenModal:
           )}
 
           {/* Code Solution Action Box */}
-          {solutionCode && (
+          {displaySolution && (
             <div className="mt-3 rounded-lg border border-card-border bg-slate-950 text-slate-100 overflow-hidden text-xs">
               <div className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-800">
                 <button
@@ -110,7 +115,7 @@ function CheckItemRow({ check, onOpenModal }: { check: CheckResult; onOpenModal:
                 {showSolution && (
                   <button
                     type="button"
-                    onClick={() => handleCopy(solutionCode)}
+                    onClick={() => handleCopy(displaySolution)}
                     className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white transition-colors"
                   >
                     {copied ? (
@@ -130,7 +135,7 @@ function CheckItemRow({ check, onOpenModal }: { check: CheckResult; onOpenModal:
 
               {showSolution && (
                 <div className="p-3 font-mono text-[11.5px] leading-relaxed overflow-x-auto bg-slate-950 text-slate-200">
-                  <pre>{solutionCode}</pre>
+                  <pre className="whitespace-pre-wrap break-words">{displaySolution}</pre>
                 </div>
               )}
             </div>

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { AuditForm } from "@/components/audit/AuditForm";
 import { AuditProgress } from "@/components/audit/AuditProgress";
 import { saveReport } from "@/lib/audit/reportCache";
-import type { AuditProgressEvent } from "@/lib/audit/runAudit";
+import type { AuditProgressEvent } from "@/types/progress.types";
 import { FRAMEWORK_CHECKPOINTS, CATEGORY_LABELS } from "@/data/framework";
 import type { AuditReport } from "@/types/audit.types";
 import { Search, FileText, BarChart3, Shield, Zap } from "lucide-react";

@@ -13,6 +13,16 @@ function isPrivateIp(ip: string): boolean {
   return false;
 }
 
+export function isLocalhostAllowed(): boolean {
+  const raw = (
+    process.env.ALLOW_LOCALHOST ||
+    process.env.ALLOW_LOCALHOST_AUDIT ||
+    process.env.AUDIT_ALLOW_LOCALHOST ||
+    ""
+  ).trim().toLowerCase();
+  return raw === "true" || raw === "1";
+}
+
 export async function validateAuditUrl(input: string): Promise<{ url: string; error?: string }> {
   try {
     const url = normalizeUrl(input);
@@ -22,27 +32,35 @@ export async function validateAuditUrl(input: string): Promise<{ url: string; er
       return { url, error: "Only HTTP and HTTPS URLs are allowed" };
     }
 
+    const allowLocalhost = isLocalhostAllowed();
     const hostname = parsed.hostname.toLowerCase();
-    if (
-      hostname === "localhost" ||
-      hostname.endsWith(".local") ||
-      hostname.endsWith(".internal") ||
-      hostname === "0.0.0.0"
-    ) {
-      return { url, error: "Local and internal URLs are not allowed" };
-    }
 
-    if (isIP(hostname)) {
-      if (isPrivateIp(hostname)) {
-        return { url, error: "Private IP addresses are not allowed" };
+    if (!allowLocalhost) {
+      if (
+        hostname === "localhost" ||
+        hostname.endsWith(".local") ||
+        hostname.endsWith(".internal") ||
+        hostname === "0.0.0.0"
+      ) {
+        return { url, error: "Local and internal URLs are not allowed" };
       }
-      return { url };
-    }
 
-    const records = await lookup(hostname, { all: true });
-    for (const record of records) {
-      if (isPrivateIp(record.address)) {
-        return { url, error: "URL resolves to a private network address" };
+      if (isIP(hostname)) {
+        if (isPrivateIp(hostname)) {
+          return { url, error: "Private IP addresses are not allowed" };
+        }
+        return { url };
+      }
+
+      try {
+        const records = await lookup(hostname, { all: true });
+        for (const record of records) {
+          if (isPrivateIp(record.address)) {
+            return { url, error: "URL resolves to a private network address" };
+          }
+        }
+      } catch {
+        // Ignore DNS lookup error during validation; fetch step will handle network connectivity
       }
     }
 

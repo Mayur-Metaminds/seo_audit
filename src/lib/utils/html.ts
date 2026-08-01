@@ -28,20 +28,67 @@ export function getTitle($: cheerio.CheerioAPI): string {
   return $("title").first().text().trim();
 }
 
-export function getH1s($: cheerio.CheerioAPI): string[] {
-  return $("h1")
-    .map((_, el) => $(el).text().trim())
-    .get()
-    .filter(Boolean);
+const VISUALLY_HIDDEN_CLASS_RE =
+  /\b(sr-only|visually-hidden|visuallyhidden|screen-reader-only|screenreader-only|u-sr-only|a11y-hidden|clip)\b/i;
+
+export interface H1ElementInfo {
+  text: string;
+  classes: string;
+  isVisuallyHidden: boolean;
+  outerHtml: string;
 }
 
+export function isVisuallyHiddenElement($: cheerio.CheerioAPI, el: unknown): boolean {
+  const node = $(el as never);
+  const classes = node.attr("class") || "";
+  const style = node.attr("style") || "";
+  const hiddenAttr = node.attr("hidden") !== undefined;
+  const ariaHidden = node.attr("aria-hidden") === "true";
+
+  return (
+    ariaHidden ||
+    hiddenAttr ||
+    VISUALLY_HIDDEN_CLASS_RE.test(classes) ||
+    /display\s*:\s*none/i.test(style) ||
+    /visibility\s*:\s*hidden/i.test(style) ||
+    /clip(?:-path)?\s*:/i.test(style) ||
+    (/position\s*:\s*absolute/i.test(style) && /left\s*:\s*-?\d{3,}px/i.test(style))
+  );
+}
+
+export function getH1Elements($: cheerio.CheerioAPI): H1ElementInfo[] {
+  return $("h1")
+    .map((_, el) => {
+      const text = $(el).text().replace(/\s+/g, " ").trim();
+      const classes = $(el).attr("class") || "";
+      let outerHtml = $.html(el) || "";
+      if (outerHtml.length > 400) {
+        outerHtml = `${outerHtml.slice(0, 400)}…`;
+      }
+      return {
+        text,
+        classes,
+        isVisuallyHidden: isVisuallyHiddenElement($, el),
+        outerHtml,
+      };
+    })
+    .get()
+    .filter((h) => Boolean(h.text));
+}
+
+export function getH1s($: cheerio.CheerioAPI): string[] {
+  return getH1Elements($).map((h) => h.text);
+}
+
+/** Collect headings in document order (not grouped by level). */
 export function getHeadings($: cheerio.CheerioAPI): { level: number; text: string }[] {
   const headings: { level: number; text: string }[] = [];
-  for (let i = 1; i <= 6; i++) {
-    $(`h${i}`).each((_, el) => {
-      headings.push({ level: i, text: $(el).text().trim() });
-    });
-  }
+  $("h1, h2, h3, h4, h5, h6").each((_, el) => {
+    const tag = (((el as { tagName?: string }).tagName) || "").toLowerCase();
+    const level = Number.parseInt(tag.replace("h", ""), 10);
+    if (!level) return;
+    headings.push({ level, text: $(el).text().replace(/\s+/g, " ").trim() });
+  });
   return headings;
 }
 
@@ -191,7 +238,19 @@ export function extractRealElementSnippet($: cheerio.CheerioAPI, selector: strin
     let targetHtml = $.html(el);
     targetHtml = targetHtml
       .replace(/srcset="[^"]+"/g, 'srcset="..."')
-      .replace(/data:image\/[^;]+;base64,[^"']+/g, 'data:image/...');
+      .replace(/data:image\/[^;]+;base64,[^"']+/g, "data:image/...")
+      // Drop huge minified CSS/JS blobs from SEO snippets
+      .replace(/<style(\s[^>]*)?>[\s\S]*?<\/style>/gi, (_m, attrs = "") => {
+        const inner = _m.replace(/^<style[^>]*>/i, "").replace(/<\/style>$/i, "");
+        if (inner.length <= 240) return _m;
+        return `<style${attrs || ""}>/* … ${inner.length} chars CSS omitted … */</style>`;
+      })
+      .replace(/<script(\s[^>]*)?>[\s\S]*?<\/script>/gi, (m, attrs = "") => {
+        if (/\bsrc=/i.test(attrs || "")) return m;
+        const inner = m.replace(/^<script[^>]*>/i, "").replace(/<\/script>$/i, "");
+        if (!inner.trim() || inner.length <= 160) return m;
+        return `<script${attrs || ""}>/* … JS omitted … */</script>`;
+      });
 
     // Build indented DOM tree matching Chrome DevTools inspector
     let indent = "";

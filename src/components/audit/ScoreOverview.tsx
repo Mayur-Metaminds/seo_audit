@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { AuditReport, CheckResult } from "@/types/audit.types";
 import { cn } from "@/lib/utils/cn";
 import { AlertTriangle, CheckCircle2, XCircle, Eye, Code2, ArrowDownRight } from "lucide-react";
@@ -83,33 +83,74 @@ export function ScoreOverview({ report }: { report: AuditReport }) {
         </div>
 
         {report.summary.topIssues.length > 0 && (
-          <div className="rounded-2xl border border-danger/30 bg-danger/5 p-6 lg:col-span-3">
-            <h3 className="text-base font-bold text-danger mb-4 flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-danger shrink-0" />
-              Priority Issues for Developers
+          <div className="rounded-2xl border border-card-border bg-card p-6 lg:col-span-3">
+            <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-400" />
+              Priority findings
             </h3>
 
-            <ul className="space-y-3">
-              {report.summary.topIssues.map((issue, i) => (
-                <li
-                  key={i}
-                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl border border-card-border/60 bg-card/60 hover:bg-card transition-colors"
-                >
-                  <div className="flex items-start gap-2.5 min-w-0">
-                    <span className="text-danger shrink-0 font-bold mt-0.5">•</span>
-                    <span className="text-sm text-foreground/90 font-medium font-mono leading-relaxed truncate">{issue}</span>
-                  </div>
+            <ul className="space-y-2">
+              {report.summary.topIssues.map((issue, i) => {
+                const match = issue.match(/^#(\d+)/);
+                const checkpointId = match ? Number(match[1]) : undefined;
+                const foundCheck = checkpointId
+                  ? allChecks.find((c) => c.checkpointId === checkpointId)
+                  : undefined;
+                const isFail = foundCheck?.status === "fail" || (!foundCheck && !/warn/i.test(issue));
 
-                  <button
-                    type="button"
-                    onClick={() => handleViewSolution(issue)}
-                    className="shrink-0 self-end sm:self-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-semibold hover:bg-accent-hover transition-colors shadow-sm"
+                return (
+                  <li
+                    key={i}
+                    className={cn(
+                      "flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2.5 rounded-lg border border-l-[3px]",
+                      isFail
+                        ? "bg-danger/10 border-danger/25 border-l-danger"
+                        : "bg-amber-500/10 border-amber-500/25 border-l-amber-500"
+                    )}
                   >
-                    <Code2 className="h-3.5 w-3.5" />
-                    View Issue
-                  </button>
-                </li>
-              ))}
+                    <div className="flex items-start gap-2 min-w-0">
+                      <span
+                        className={cn(
+                          "shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded border mt-0.5",
+                          isFail
+                            ? "bg-danger/15 text-danger border-danger/30"
+                            : "bg-amber-500/15 text-amber-400 border-amber-500/30"
+                        )}
+                      >
+                        {isFail ? "Issue" : "Warning"}
+                        {checkpointId ? ` #${checkpointId}` : ""}
+                      </span>
+                      <span className="text-sm text-foreground/90 font-mono leading-relaxed truncate">
+                        {issue.replace(/^#\d+\s*/, "")}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={() => handleScrollToIssue(issue)}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-card-border text-xs text-muted hover:text-foreground"
+                        title="Jump to checklist"
+                      >
+                        <ArrowDownRight className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleViewSolution(issue)}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium transition-colors",
+                          isFail
+                            ? "bg-danger/15 text-danger border-danger/30 hover:bg-danger/25"
+                            : "bg-amber-500/15 text-amber-400 border-amber-500/30 hover:bg-amber-500/25"
+                        )}
+                      >
+                        <Code2 className="h-3.5 w-3.5" />
+                        Solution
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
@@ -126,7 +167,7 @@ export function ScoreOverview({ report }: { report: AuditReport }) {
   );
 }
 
-function SummaryStat({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) {
+function SummaryStat({ icon, label, value }: { icon: ReactNode; label: string; value: number }) {
   return (
     <div className="rounded-lg bg-background/50 p-3">
       <div className="flex items-center gap-2 mb-1">
