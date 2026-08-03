@@ -6,6 +6,7 @@ import { FRAMEWORK_CHECKPOINTS, PRIORITY_COLORS } from "@/data/framework";
 import { getExplainer } from "@/data/checkpointExplainers";
 import { cn } from "@/lib/utils/cn";
 import { formatCodeSnippet } from "@/lib/utils/formatCodeSnippet";
+import { buildPageCanonicalSolution } from "@/lib/utils/html";
 import {
   X,
   MapPin,
@@ -102,12 +103,18 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
   }, [check, checkpointId]);
 
   useEffect(() => {
-    if (isOpen) document.body.style.overflow = "hidden";
-    else document.body.style.overflow = "";
-    return () => {
-      document.body.style.overflow = "";
+    if (!isOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
     };
-  }, [isOpen]);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -140,15 +147,40 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
     occurrence?.issueCode || check?.issueCode || cp?.issueCode || "<!-- Issue present: element missing or invalid -->";
   const baseSolutionCode = occurrence?.solutionCode || check?.solutionCode || cp?.solutionCode;
 
+  // #4 Canonical: rebuild sample codes from the active URL, but never invent a
+  // "missing" problem when this occurrence already passed or has a different message.
+  const status = occurrence?.status || check?.status;
+  const msg = (occurrence?.message || check?.message || "").toLowerCase();
+  const isCanonicalMissingFinding =
+    id === 4 && (msg.includes("missing canonical") || (status === "fail" && msg.includes("canonical")));
+  const canonicalRebuild =
+    id === 4 && activeUrl && activeUrl !== "site-wide" && (isCanonicalMissingFinding || status === "warn")
+      ? buildPageCanonicalSolution(activeUrl)
+      : null;
+  // For missing: full rebuild. For warn (relative/wrong): only replace polluted solution snippets.
+  const useCanonicalSolution =
+    !!canonicalRebuild &&
+    (isCanonicalMissingFinding ||
+      !baseSolutionCode ||
+      /preload|\/_next\/|webpack/i.test(baseSolutionCode || ""));
+  const useCanonicalIssue =
+    !!canonicalRebuild &&
+    isCanonicalMissingFinding &&
+    (!baseIssueCode || /preload|\/_next\/|webpack|<style/i.test(baseIssueCode));
+
+  const issueCodeRaw = useCanonicalIssue && canonicalRebuild ? canonicalRebuild.issueCode : baseIssueCode;
+  const solutionCodeRaw =
+    useCanonicalSolution && canonicalRebuild ? canonicalRebuild.solutionCode : baseSolutionCode;
+
   const issueCode =
     urls.length > 1
-      ? `<!-- Occurrence #${urlIndex + 1} on Page: ${activeUrlPath || activeUrl} -->\n${baseIssueCode}`
-      : baseIssueCode;
+      ? `<!-- Occurrence #${urlIndex + 1} on Page: ${activeUrlPath || activeUrl} -->\n${issueCodeRaw}`
+      : issueCodeRaw;
 
   const solutionCode =
-    baseSolutionCode && urls.length > 1
-      ? `<!-- Corrected Solution for Page #${urlIndex + 1}: ${activeUrlPath || activeUrl} -->\n${baseSolutionCode}`
-      : baseSolutionCode;
+    solutionCodeRaw && urls.length > 1
+      ? `<!-- Corrected Solution for Page #${urlIndex + 1}: ${activeUrlPath || activeUrl} -->\n${solutionCodeRaw}`
+      : solutionCodeRaw;
 
   const detectedMessage = occurrence?.message || check?.message;
   const detectedEvidence = occurrence?.evidence || check?.evidence;
@@ -160,15 +192,24 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
         : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="relative w-full max-w-6xl max-h-[92vh] flex flex-col rounded-2xl border border-card-border bg-card shadow-2xl overflow-hidden">
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="solution-modal-title"
+      onClick={onClose}
+    >
+      <div
+        className="relative w-full max-w-6xl max-h-[92vh] min-h-0 flex flex-col rounded-2xl border border-card-border bg-card shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-card-border bg-background/70 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <span className="text-xs font-mono font-bold text-accent bg-accent/10 border border-accent/20 px-2.5 py-1 rounded-md shrink-0">
               #{id}
             </span>
             <div className="min-w-0">
-              <h3 className="text-lg font-bold text-foreground tracking-tight truncate">
+              <h3 id="solution-modal-title" className="text-lg font-bold text-foreground tracking-tight truncate">
                 {cp?.name || check?.message || `Issue #${id}`}
               </h3>
               {cp && (
@@ -195,6 +236,7 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close solution"
             className="p-2 rounded-xl hover:bg-background/80 text-muted hover:text-foreground transition-colors shrink-0"
           >
             <X className="h-5 w-5" />
@@ -234,7 +276,7 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
           </div>
         )}
 
-        <div className="p-6 overflow-y-auto grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="space-y-4 flex flex-col">
             {/* Verdict: genuine SEO impact */}
             <div
@@ -356,7 +398,12 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
                   <span>Problematic Code / Evidence</span>
                 </div>
               </div>
-              <DiffCodeBlock code={issueCode} type="issue" onCopy={(txt) => navigator.clipboard.writeText(txt)} />
+              <DiffCodeBlock
+                code={issueCode}
+                type="issue"
+                checkpointId={id}
+                onCopy={(txt) => navigator.clipboard.writeText(txt)}
+              />
             </div>
           </div>
 
@@ -392,6 +439,7 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
                 <DiffCodeBlock
                   code={solutionCode}
                   type="solution"
+                  checkpointId={id}
                   onCopy={(txt) => navigator.clipboard.writeText(txt)}
                 />
               </div>
@@ -434,13 +482,73 @@ export function SolutionModal({ check, checkpointId, isOpen, onClose, pageUrl }:
   );
 }
 
+/** Keywords that are actually the SEO fix — never framework/runtime noise. */
+function solutionHighlightMatchers(checkpointId?: number): RegExp[] {
+  switch (checkpointId) {
+    case 4:
+    case 23:
+    case 24:
+      return [/rel=["']canonical["']/i, /canonical:\s*['"]/i, /link rel=.canonical/i];
+    case 7:
+      return [/name=["']robots["']/i, /noindex/i, /index,\s*follow/i];
+    case 9:
+      return [/<title[\s>]/i];
+    case 10:
+      return [/name=["']description["']/i];
+    case 11:
+    case 12:
+      return [/<h[1-6][\s>]/i];
+    case 15:
+      return [/\balt=/i, /<img\b/i];
+    case 16:
+      return [/application\/ld\+json/i, /"@type"/i, /schema\.org/i];
+    case 20:
+      return [/name=["']viewport["']/i];
+    case 22:
+      return [/<main[\s>]/i, /<h1[\s>]/i, /SSR|SSG|prerender/i];
+    default:
+      return [];
+  }
+}
+
+function isMeaningfulSolutionLine(line: string, checkpointId?: number): boolean {
+  const t = line.trim();
+  if (!t) return false;
+  // Never treat Next framework assets as "the fix"
+  if (/\/_next\//i.test(t) || /webpack-/i.test(t)) return false;
+  if (/rel=["'](?:preload|modulepreload|prefetch|stylesheet)["']/i.test(t)) return false;
+  if (/as=["'](?:script|style)["']/i.test(t)) return false;
+  // Comments that are only docs (keep metadata-related ones for context)
+  if (t.startsWith("//") && !/canonical|metadata|title|description/i.test(t)) return false;
+
+  if (t.startsWith("+")) return true;
+  if (/<!--\s*Corrected/i.test(t) || /Exactly one H1/i.test(t)) return true;
+
+  const matchers = solutionHighlightMatchers(checkpointId);
+  if (matchers.some((re) => re.test(t))) return true;
+
+  return false;
+}
+
+function isMeaningfulIssueLine(line: string, checkpointId?: number): boolean {
+  const t = line.trim();
+  if (!t) return false;
+  if (t.startsWith("-")) return true;
+  if (/PROBLEM:|Missing:|<!-- Issue|<!-- Missing|H1s on|Server response/i.test(t)) return true;
+  if (checkpointId === 4 && /rel=["']canonical["']/i.test(t) && t.startsWith("-")) return true;
+  if (/\/_next\//i.test(t) || /webpack-/i.test(t)) return false;
+  return false;
+}
+
 function DiffCodeBlock({
   code,
   type,
+  checkpointId,
   onCopy,
 }: {
   code: string;
   type: "issue" | "solution";
+  checkpointId?: number;
   onCopy: (copiedText: string) => void;
 }) {
   const [copiedPill, setCopiedPill] = useState<string | null>(null);
@@ -524,7 +632,7 @@ function DiffCodeBlock({
 
       <div
         className={cn(
-          "p-0 font-mono text-xs leading-relaxed flex-1 bg-slate-950",
+          "p-0 font-mono text-xs leading-relaxed flex-1 max-h-[min(40vh,22rem)] overflow-y-auto overscroll-contain bg-slate-950",
           wordWrap ? "overflow-x-hidden" : "overflow-x-auto"
         )}
       >
@@ -532,19 +640,8 @@ function DiffCodeBlock({
           <tbody>
             {lines.map((line, idx) => {
               const trimmed = line.trim();
-              const isRemoved =
-                type === "issue" &&
-                (trimmed.startsWith("-") ||
-                  line.includes("<!-- Issue") ||
-                  line.includes("<!-- Missing") ||
-                  line.includes("H1s on") ||
-                  line.includes("Server response"));
-              const isAdded =
-                type === "solution" &&
-                (trimmed.startsWith("+") ||
-                  line.includes("<!-- Corrected") ||
-                  line.includes("Exactly one H1") ||
-                  line.includes("fetchpriority"));
+              const isRemoved = type === "issue" && isMeaningfulIssueLine(line, checkpointId);
+              const isAdded = type === "solution" && isMeaningfulSolutionLine(line, checkpointId);
 
               return (
                 <tr

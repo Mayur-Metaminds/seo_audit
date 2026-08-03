@@ -3,7 +3,7 @@ import { SearchCheck } from "lucide-react";
 
 export function Header() {
   return (
-    <header className="border-b border-card-border bg-sidebar/80 backdrop-blur-sm sticky top-0 z-50">
+    <header className="border-b border-card-border bg-sidebar/80 backdrop-blur-sm sticky top-0 z-40">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
         <Link href="/" className="flex items-center gap-3 group">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/10 text-accent group-hover:bg-accent/20 transition-colors">

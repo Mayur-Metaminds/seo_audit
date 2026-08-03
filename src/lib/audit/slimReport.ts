@@ -1,7 +1,7 @@
 import type { AuditReport, CheckOccurrence, CheckResult, PageAuditResult } from "@/types/audit.types";
 
-const CODE_LIMIT = 2500;
-const EVIDENCE_LIMIT = 8;
+const CODE_LIMIT = 3200;
+const EVIDENCE_LIMIT = 10;
 const OCCURRENCE_LIMIT = 40;
 
 function slimOccurrence(occ: CheckOccurrence): CheckOccurrence {

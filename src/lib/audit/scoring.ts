@@ -75,8 +75,16 @@ export function aggregateChecks(allChecks: CheckResult[]): Map<number, CheckResu
     else if (nas.length === checks.length) status = "na";
 
     const scorable = checks.filter((c) => c.status !== "manual");
-    const avgScore =
-      scorable.length > 0 ? scorable.reduce((sum, c) => sum + c.score, 0) / scorable.length : checks[0]?.score || 0;
+    // Enterprise scoring: when fails/warns exist, do not dilute with passes
+    let avgScore: number;
+    if (fails.length > 0) {
+      avgScore = fails.reduce((sum, c) => sum + c.score, 0) / fails.length;
+    } else if (warns.length > 0) {
+      avgScore = warns.reduce((sum, c) => sum + c.score, 0) / warns.length;
+    } else {
+      avgScore =
+        scorable.length > 0 ? scorable.reduce((sum, c) => sum + c.score, 0) / scorable.length : checks[0]?.score || 0;
+    }
     const maxScore = checks[0]?.maxScore || 5;
 
     const problemChecks = fails.length > 0 ? fails : warns.length > 0 ? warns : [];
@@ -122,9 +130,14 @@ export function aggregateChecks(allChecks: CheckResult[]): Map<number, CheckResu
       affectedUrls: affectedUrls.slice(0, 50),
       scope: checks.some((c) => c.scope === "site") ? "site" : "page",
       codeLocation: primary?.codeLocation,
-      issueCode: occurrences.length === 1 ? occurrences[0].issueCode || primary?.issueCode : primary?.issueCode,
+      issueCode:
+        occurrences.length === 1
+          ? occurrences[0].issueCode || primary?.issueCode
+          : occurrences.find((o) => o.issueCode)?.issueCode || primary?.issueCode,
       solutionCode:
-        occurrences.length === 1 ? occurrences[0].solutionCode || primary?.solutionCode : primary?.solutionCode,
+        occurrences.length === 1
+          ? occurrences[0].solutionCode || primary?.solutionCode
+          : occurrences.find((o) => o.solutionCode)?.solutionCode || primary?.solutionCode,
       occurrences: occurrences.slice(0, 50),
       whyItMatters: primary?.whyItMatters,
       seoImpact: primary?.seoImpact,

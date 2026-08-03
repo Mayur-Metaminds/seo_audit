@@ -146,9 +146,13 @@ export async function enrichPagesWithRender(
 
   return pages.map((page) => {
     const hit = renderedMap.get(page.finalUrl);
-    if (!hit) return page;
+    if (!hit) {
+      // Still keep an explicit rawHtml pointer = HTTP body (view-source parity)
+      return page.rawHtml ? page : { ...page, rawHtml: page.html };
+    }
     return {
       ...page,
+      // Never lose HTTP HTML — head SEO (canonical/title/meta) is validated against it
       rawHtml: page.rawHtml || page.html,
       html: hit.html,
       rendered: true,

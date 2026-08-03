@@ -14,6 +14,25 @@ export function normalizeUrl(input: string): string {
   return parsed.toString();
 }
 
+/** Compare preferred URLs for SEO (www vs bare host treated as same). */
+export function urlsEquivalent(a: string, b: string): boolean {
+  try {
+    const na = new URL(normalizeUrl(a));
+    const nb = new URL(normalizeUrl(b));
+    const hostA = na.hostname.replace(/^www\./i, "").toLowerCase();
+    const hostB = nb.hostname.replace(/^www\./i, "").toLowerCase();
+    const pathA = na.pathname === "/" ? "/" : na.pathname.replace(/\/$/, "");
+    const pathB = nb.pathname === "/" ? "/" : nb.pathname.replace(/\/$/, "");
+    return hostA === hostB && pathA === pathB && na.search === nb.search;
+  } catch {
+    try {
+      return normalizeUrl(a) === normalizeUrl(b);
+    } catch {
+      return a === b;
+    }
+  }
+}
+
 export function getDomain(url: string): string {
   return new URL(url).hostname.replace(/^www\./, "");
 }

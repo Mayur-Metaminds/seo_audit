@@ -374,7 +374,7 @@ function PageRow({
             {findings.length === 0 ? (
               <p className="text-xs text-muted">No issues or warnings on this page.</p>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-4 max-h-[28rem] overflow-y-auto overscroll-contain pr-1">
                 {failFindings.length > 0 && (
                   <FindingGroup
                     title="Issues"

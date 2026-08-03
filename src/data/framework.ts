@@ -1043,16 +1043,16 @@ export function getGrade(percentage: number): "elite" | "good" | "needs-work" | 
 }
 
 export const PRIORITY_COLORS: Record<Priority, string> = {
-  critical: "text-red-600 bg-red-50 border-red-200",
-  high: "text-orange-600 bg-orange-50 border-orange-200",
-  medium: "text-amber-600 bg-amber-50 border-amber-200",
-  low: "text-slate-600 bg-slate-50 border-slate-200",
+  critical: "text-danger bg-danger/15 border-danger/30",
+  high: "text-orange-400 bg-orange-500/15 border-orange-500/30",
+  medium: "text-amber-400 bg-amber-500/15 border-amber-500/30",
+  low: "text-muted bg-background/60 border-card-border",
 };
 
 export const STATUS_COLORS: Record<string, string> = {
-  pass: "text-emerald-700 bg-emerald-50 border-emerald-200",
-  warn: "text-amber-700 bg-amber-50 border-amber-200",
-  fail: "text-red-700 bg-red-50 border-red-200",
-  na: "text-slate-500 bg-slate-50 border-slate-200",
-  manual: "text-blue-700 bg-blue-50 border-blue-200",
+  pass: "text-emerald-400 bg-emerald-500/15 border-emerald-500/30",
+  warn: "text-amber-400 bg-amber-500/15 border-amber-500/30",
+  fail: "text-danger bg-danger/15 border-danger/30",
+  na: "text-muted bg-background/60 border-card-border",
+  manual: "text-sky-400 bg-sky-500/15 border-sky-500/30",
 };

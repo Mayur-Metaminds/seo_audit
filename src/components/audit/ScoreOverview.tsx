@@ -34,13 +34,19 @@ export function ScoreOverview({ report }: { report: AuditReport }) {
   const handleScrollToIssue = (issueText: string) => {
     const match = issueText.match(/^#(\d+)/);
     if (!match) return;
-    const id = match[1];
-    const el = document.getElementById(`checkpoint-${id}`);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.classList.add("ring-2", "ring-accent");
-      setTimeout(() => el.classList.remove("ring-2", "ring-accent"), 2500);
-    }
+    const checkpointId = Number(match[1]);
+    window.dispatchEvent(
+      new CustomEvent("seo-jump-checkpoint", { detail: { checkpointId } })
+    );
+    // Fallback if checklist already expanded
+    setTimeout(() => {
+      const el = document.getElementById(`checkpoint-${checkpointId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("ring-2", "ring-accent");
+        setTimeout(() => el.classList.remove("ring-2", "ring-accent"), 2500);
+      }
+    }, 120);
   };
 
   return (
@@ -131,6 +137,7 @@ export function ScoreOverview({ report }: { report: AuditReport }) {
                         onClick={() => handleScrollToIssue(issue)}
                         className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-card-border text-xs text-muted hover:text-foreground"
                         title="Jump to checklist"
+                        aria-label="Jump to checklist item"
                       >
                         <ArrowDownRight className="h-3.5 w-3.5" />
                       </button>

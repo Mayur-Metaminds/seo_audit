@@ -9,19 +9,38 @@ const LINE_SOFT_WRAP = 120;
 /** Collapse noisy inline CSS/JS so SEO snippets stay readable. */
 export function sanitizeSnippetNoise(code: string): string {
   return code
+    // Drop Next.js runtime assets that pollute SEO evidence (chunks, CSS, preloads)
+    .replace(/<link\b[^>]*>/gi, (tag) => {
+      const t = tag.toLowerCase();
+      if (/\/_next\//.test(t)) return "";
+      if (/webpack-|polyfills-|main-app-/i.test(t)) return "";
+      if (/rel=["'](?:preload|modulepreload|prefetch)["']/i.test(t)) return "";
+      if (/rel=["']stylesheet["']/i.test(t)) return "";
+      return tag;
+    })
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script\b[^>]*(?:\/>|>[\s\S]*?<\/script>)/gi, (tag) => {
+      if (/type=["']application\/ld\+json["']/i.test(tag)) return tag;
+      if (/\/_next\//i.test(tag) || /src=["'][^"']*\.js/i.test(tag)) {
+        return "";
+      }
+      return tag;
+    })
     .replace(/<style(\s[^>]*)?>[\s\S]*?<\/style>/gi, (_m, attrs = "") => {
       const inner = _m.replace(/^<style[^>]*>/i, "").replace(/<\/style>$/i, "");
       if (inner.length <= STYLE_MAX) return _m;
       return `<style${attrs || ""}>\n  /* … ${inner.length} chars of CSS omitted (not needed for this SEO fix) … */\n</style>`;
     })
     .replace(/<script(\s[^>]*)?>[\s\S]*?<\/script>/gi, (m, attrs = "") => {
+      if (/type=["']application\/ld\+json["']/i.test(attrs || "")) return m;
       if (/\bsrc=/i.test(attrs || "")) return m;
       const inner = m.replace(/^<script[^>]*>/i, "").replace(/<\/script>$/i, "");
       if (!inner.trim() || inner.length <= SCRIPT_MAX) return m;
       return `<script${attrs || ""}>\n  /* … ${inner.length} chars of JS omitted … */\n</script>`;
     })
     .replace(/srcset="[^"]+"/g, 'srcset="..."')
-    .replace(/data:image\/[^;]+;base64,[^"']+/g, "data:image/...");
+    .replace(/data:image\/[^;]+;base64,[^"']+/g, "data:image/...")
+    .replace(/\n{3,}/g, "\n\n");
 }
 
 function formatCssBlock(css: string, baseIndent: string): string {

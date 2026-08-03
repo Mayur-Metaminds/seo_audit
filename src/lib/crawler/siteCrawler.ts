@@ -79,7 +79,8 @@ export async function crawlSite(
       batch.map(async (url) => {
         try {
           const page = await fetchWithRedirects(url);
-          crawled.set(url, page);
+          // Preserve HTTP body as rawHtml for view-source parity (head SEO)
+          crawled.set(url, { ...page, rawHtml: page.html });
           linkStatusMap.set(normalizeUrl(page.finalUrl), page.statusCode);
 
           if (page.statusCode === 200 && page.html) {
