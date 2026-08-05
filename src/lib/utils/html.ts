@@ -201,8 +201,8 @@ export function getImages($: cheerio.CheerioAPI): {
 }
 
 export function getInternalLinks($: cheerio.CheerioAPI): string[] {
-  return $('a[href]')
-    .map((_, el) => $(el).attr("href") || "")
+  return $('a[href], area[href], [data-href]')
+    .map((_, el) => $(el).attr("href") || $(el).attr("data-href") || "")
     .get()
     .filter(Boolean);
 }

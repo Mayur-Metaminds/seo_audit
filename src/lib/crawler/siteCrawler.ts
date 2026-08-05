@@ -2,6 +2,7 @@ import type { AuditConfig, CrawledPage } from "@/types/audit.types";
 import { fetchWithRedirects } from "./fetchPage";
 import { fetchRobotsTxt, fetchSitemap, isUrlBlockedByRobots } from "./sitemap";
 import { isIndexableUrl, isSameDomain, normalizeUrl } from "@/lib/utils/url";
+import { parseHtml, getInternalLinks } from "@/lib/utils/html";
 
 export interface CrawlResult {
   pages: CrawledPage[];
@@ -57,7 +58,7 @@ export async function crawlSite(
     // Strict sitemap universe
     for (const sitemapUrl of sitemap.urls) {
       try {
-        if (!isSameDomain(sitemapUrl, baseUrl)) continue;
+        if (!isSameDomain(sitemapUrl, baseUrl, config.includeSubdomains)) continue;
         if (!isIndexableUrl(sitemapUrl)) continue;
         const normalized = normalizeUrl(sitemapUrl);
         queueSet.add(normalized);
@@ -69,7 +70,7 @@ export async function crawlSite(
 
     // Always include the URL the user asked to audit
     try {
-      if (isSameDomain(baseUrl, origin)) {
+      if (isSameDomain(baseUrl, origin, config.includeSubdomains)) {
         const seed = normalizeUrl(baseUrl);
         queueSet.add(seed);
         allDiscovered.add(seed);
@@ -152,6 +153,167 @@ export async function crawlSite(
     remainingUrls,
     blockedUrls: [...blockedUrls],
     sitemapOnly,
+    robots,
+    sitemap,
+    linkStatusMap,
+  };
+}
+
+/**
+ * Crawl policy for Webflow & General Websites (Deep Link Crawler):
+ * - Discovers pages starting from startUrl and by traversing internal HTML <a href="..."> links.
+ * - Also checks robots.txt and sitemap.xml to add sitemap URLs as initial discovery points if available.
+ * - Extracts links from fetched pages, normalizes them, filters non-indexable extensions, checks robots.txt, and queues new internal links up to maxPages.
+ * - Solves missing/incomplete sitemap issues for Webflow, WordPress, Shopify, Wix, and general websites.
+ */
+export async function crawlWebflowSite(
+  startUrl: string,
+  config: AuditConfig,
+  onProgress?: CrawlProgressCallback
+): Promise<CrawlResult> {
+  const baseUrl = normalizeUrl(startUrl);
+
+  const robots = await fetchRobotsTxt(baseUrl);
+  const sitemap = await fetchSitemap(baseUrl, robots.sitemaps);
+
+  const queueSet = new Set<string>();
+  const crawled = new Map<string, CrawledPage>();
+  const allDiscovered = new Set<string>();
+  const blockedUrls = new Set<string>();
+  const linkStatusMap = new Map<string, number>();
+
+  // Seed with user's target URL
+  queueSet.add(baseUrl);
+  allDiscovered.add(baseUrl);
+
+  // If sitemap exists, add its URLs as initial discovery seeds too
+  if (sitemap.exists && sitemap.urls.length > 0) {
+    for (const sitemapUrl of sitemap.urls) {
+      try {
+        if (!isSameDomain(sitemapUrl, baseUrl, config.includeSubdomains)) continue;
+        if (!isIndexableUrl(sitemapUrl)) continue;
+        const normalized = normalizeUrl(sitemapUrl);
+        queueSet.add(normalized);
+        allDiscovered.add(normalized);
+      } catch {
+        /* ignore bad loc */
+      }
+    }
+  }
+
+  const queue = [...queueSet];
+  const limit = config.maxPages === Infinity ? Number.MAX_SAFE_INTEGER : config.maxPages;
+
+  while (crawled.size < limit && queue.length > 0) {
+    const batch: string[] = [];
+    while (batch.length < CRAWL_CONCURRENCY && queue.length > 0 && crawled.size + batch.length < limit) {
+      const url = queue.shift()!;
+      if (crawled.has(url) || batch.includes(url) || blockedUrls.has(url)) continue;
+      if (isUrlBlockedByRobots(url, robots.disallows, robots.allows)) {
+        blockedUrls.add(url);
+        continue;
+      }
+      batch.push(url);
+    }
+
+    if (batch.length === 0) {
+      if (queue.length > 0) {
+        for (const url of queue) {
+          if (!crawled.has(url)) blockedUrls.add(url);
+        }
+        queue.length = 0;
+      }
+      break;
+    }
+
+    await Promise.all(
+      batch.map(async (url) => {
+        try {
+          const page = await fetchWithRedirects(url);
+          crawled.set(url, { ...page, rawHtml: page.html });
+          linkStatusMap.set(normalizeUrl(page.finalUrl), page.statusCode);
+          linkStatusMap.set(url, page.statusCode);
+
+          // Deep Link Discovery for Webflow & General Web Audit:
+          // 1. Ensure page.finalUrl belongs strictly to the audited site domain (did NOT redirect to external domain)
+          const isFinalUrlSameDomain = isSameDomain(page.finalUrl, baseUrl, config.includeSubdomains);
+
+          if (isFinalUrlSameDomain && page.statusCode >= 200 && page.statusCode < 400 && page.html) {
+            const $ = parseHtml(page.html);
+            const extractedHrefs = getInternalLinks($);
+
+            for (const rawHref of extractedHrefs) {
+              if (
+                !rawHref ||
+                rawHref.startsWith("#") ||
+                rawHref.startsWith("javascript:") ||
+                rawHref.startsWith("mailto:") ||
+                rawHref.startsWith("tel:") ||
+                rawHref.startsWith("whatsapp:") ||
+                rawHref.startsWith("sms:") ||
+                rawHref.startsWith("data:") ||
+                rawHref.startsWith("blob:")
+              ) {
+                continue;
+              }
+
+              try {
+                const resolved = new URL(rawHref, page.finalUrl);
+                resolved.hash = "";
+                const absoluteUrl = resolved.href;
+
+                // STRICT DOMAIN GUARD: Must belong strictly to the audited website domain!
+                if (!isSameDomain(absoluteUrl, baseUrl, config.includeSubdomains)) continue;
+                if (!isIndexableUrl(absoluteUrl)) continue;
+
+                const normalized = normalizeUrl(absoluteUrl);
+
+                if (!allDiscovered.has(normalized)) {
+                  allDiscovered.add(normalized);
+                  if (isUrlBlockedByRobots(normalized, robots.disallows, robots.allows)) {
+                    blockedUrls.add(normalized);
+                  } else if (!crawled.has(normalized) && !queue.includes(normalized)) {
+                    queue.push(normalized);
+                  }
+                }
+              } catch {
+                /* ignore invalid URL */
+              }
+            }
+          }
+        } catch (error) {
+          crawled.set(url, {
+            url,
+            finalUrl: url,
+            statusCode: 0,
+            html: "",
+            rawHtml: "",
+            headers: {},
+            responseTimeMs: 0,
+            ttfbMs: 0,
+            contentLength: 0,
+            redirectChain: [],
+            redirectStatuses: [],
+            contentType: "",
+            error: error instanceof Error ? error.message : "Fetch failed",
+          });
+          linkStatusMap.set(url, 0);
+        }
+
+        const remaining = Math.max(0, allDiscovered.size - crawled.size - blockedUrls.size);
+        onProgress?.(crawled.size, allDiscovered.size, remaining, url);
+      })
+    );
+  }
+
+  const remainingUrls = [...allDiscovered].filter((u) => !crawled.has(u) && !blockedUrls.has(u));
+
+  return {
+    pages: [...crawled.values()],
+    allDiscoveredUrls: [...allDiscovered],
+    remainingUrls,
+    blockedUrls: [...blockedUrls],
+    sitemapOnly: false,
     robots,
     sitemap,
     linkStatusMap,

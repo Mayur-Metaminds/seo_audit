@@ -34,12 +34,21 @@ export function urlsEquivalent(a: string, b: string): boolean {
 }
 
 export function getDomain(url: string): string {
-  return new URL(url).hostname.replace(/^www\./, "");
+  try {
+    return new URL(url).hostname.replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return url.replace(/^www\./i, "").toLowerCase();
+  }
 }
 
-export function isSameDomain(url: string, baseUrl: string): boolean {
+export function isSameDomain(url: string, baseUrl: string, includeSubdomains = false): boolean {
   try {
-    return getDomain(url) === getDomain(baseUrl);
+    const targetHost = getDomain(normalizeUrl(url));
+    const baseHost = getDomain(normalizeUrl(baseUrl));
+    if (includeSubdomains) {
+      return targetHost === baseHost || targetHost.endsWith("." + baseHost);
+    }
+    return targetHost === baseHost;
   } catch {
     return false;
   }
@@ -57,9 +66,22 @@ export function resolveUrl(href: string, baseUrl: string): string | null {
 }
 
 export function isIndexableUrl(url: string): boolean {
-  const lower = url.toLowerCase();
-  const blockedExtensions = [".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".css", ".js", ".zip"];
-  return !blockedExtensions.some((ext) => lower.endsWith(ext));
+  try {
+    const parsed = new URL(normalizeUrl(url));
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    const path = parsed.pathname.toLowerCase();
+    const blockedExtensions = [
+      ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico",
+      ".css", ".js", ".zip", ".tar", ".gz", ".rar", ".7z",
+      ".mp4", ".mp3", ".webm", ".wav", ".avi", ".mov",
+      ".ttf", ".woff", ".woff2", ".eot", ".otf",
+      ".json", ".xml"
+    ];
+    if (blockedExtensions.some((ext) => path.endsWith(ext))) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function truncate(text: string, max = 120): string {

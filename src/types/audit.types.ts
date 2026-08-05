@@ -151,6 +151,7 @@ export interface AuditConfig {
   maxPages: number;
   includeSubdomains: boolean;
   followExternalLinks: boolean;
+  mode?: "sitemap" | "webflow";
 }
 
 export interface CrawledPage {
@@ -196,4 +197,5 @@ export interface SitemapInfo {
 export interface StartAuditRequest {
   url: string;
   maxPages?: number;
+  mode?: "sitemap" | "webflow";
 }

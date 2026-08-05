@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { AuditForm } from "@/components/audit/AuditForm";
+import { AuditForm, type AuditMode } from "@/components/audit/AuditForm";
 import { AuditProgress } from "@/components/audit/AuditProgress";
 import { saveReport } from "@/lib/audit/reportCache";
 import type { AuditProgressEvent } from "@/types/progress.types";
@@ -14,7 +14,7 @@ const features = [
   {
     icon: Search,
     title: "Full Site Crawl",
-    description: "Discovers pages only via robots.txt + /sitemap.xml (and nested .xml children), then audits each one.",
+    description: "Discovers pages via robots.txt + /sitemap.xml (Sitemap mode) or HTML link graph (Webflow mode), then audits each one.",
   },
   {
     icon: FileText,
@@ -40,12 +40,13 @@ const features = [
 
 async function runStreamingAudit(
   url: string,
+  mode: AuditMode,
   onProgress: (event: AuditProgressEvent) => void
 ): Promise<AuditReport> {
   const res = await fetch("/api/audit", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, mode }),
   });
 
   if (!res.ok) {
@@ -131,7 +132,7 @@ export default function HomePage() {
   const [error, setError] = useState("");
   const categories = Object.entries(CATEGORY_LABELS);
 
-  async function handleStart(url: string) {
+  async function handleStart(url: string, mode: AuditMode) {
     setError("");
     setProgress({
       phase: "initializing",
@@ -146,7 +147,7 @@ export default function HomePage() {
     setAuditUrl(url);
 
     try {
-      const report = await runStreamingAudit(url, setProgress);
+      const report = await runStreamingAudit(url, mode, setProgress);
       await saveReport(report);
       router.push(`/audit/${report.id}`);
     } catch (err) {

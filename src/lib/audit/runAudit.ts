@@ -1,6 +1,6 @@
 import type { AuditConfig, AuditReport, CrawledPage } from "@/types/audit.types";
 import type { AuditProgressEvent, ProgressCallback } from "@/types/progress.types";
-import { crawlSite, checkSensitiveFiles, check404Page, findHomepage } from "@/lib/crawler/siteCrawler";
+import { crawlSite, crawlWebflowSite, checkSensitiveFiles, check404Page, findHomepage } from "@/lib/crawler/siteCrawler";
 import { enrichPagesWithRender, closeRenderBrowser, isHeadlessEnabled } from "@/lib/crawler/renderPage";
 import { auditPage, auditPerformance, auditAssets, auditSecurity, auditEeat } from "@/lib/auditors";
 import {
@@ -116,35 +116,68 @@ export async function runAudit(
   };
 
   try {
-    emit({
-      phase: "initializing",
-      current: 0,
-      total: 0,
-      remaining: 0,
-      discovered: 0,
-      percent: 2,
-      url,
-        message: unlimited
-        ? "Fetching robots.txt + /sitemap.xml (dig nested .xml children only; no guessed paths)..."
-        : `Fetching robots.txt + /sitemap.xml (cap ${config.maxPages}; nested dig only)...`,
-    });
-
-    const crawl = await crawlSite(url, config, (current, discovered, remaining, pageUrl) => {
-      const denom = unlimited ? Math.max(discovered, current, 1) : Math.max(config.maxPages, 1);
-      const crawlShare = Math.min(1, current / denom);
+    let crawl;
+    if (config.mode === "webflow") {
       emit({
-        phase: "crawling",
-        current,
-        total: discovered,
-        discovered,
-        remaining,
-        percent: 5 + crawlShare * 50,
-        url: pageUrl,
+        phase: "initializing",
+        current: 0,
+        total: 0,
+        remaining: 0,
+        discovered: 0,
+        percent: 2,
+        url,
         message: unlimited
-          ? `Crawling ${current} done · ${remaining} remaining · ${discovered} from sitemap dig`
-          : `Crawling ${current}/${config.maxPages} · ${discovered} from sitemap dig · ${remaining} left`,
+          ? "Starting Webflow & General Web Crawl (following page links + sitemap)..."
+          : `Starting Webflow & General Web Crawl (cap ${config.maxPages}; link discovery)...`,
       });
-    });
+
+      crawl = await crawlWebflowSite(url, config, (current, discovered, remaining, pageUrl) => {
+        const denom = unlimited ? Math.max(discovered, current, 1) : Math.max(config.maxPages, 1);
+        const crawlShare = Math.min(1, current / denom);
+        emit({
+          phase: "crawling",
+          current,
+          total: discovered,
+          discovered,
+          remaining,
+          percent: 5 + crawlShare * 50,
+          url: pageUrl,
+          message: unlimited
+            ? `Crawling ${current} done · ${remaining} remaining · ${discovered} discovered via page links`
+            : `Crawling ${current}/${config.maxPages} · ${discovered} discovered · ${remaining} left`,
+        });
+      });
+    } else {
+      emit({
+        phase: "initializing",
+        current: 0,
+        total: 0,
+        remaining: 0,
+        discovered: 0,
+        percent: 2,
+        url,
+        message: unlimited
+          ? "Fetching robots.txt + /sitemap.xml (dig nested .xml children only; no guessed paths)..."
+          : `Fetching robots.txt + /sitemap.xml (cap ${config.maxPages}; nested dig only)...`,
+      });
+
+      crawl = await crawlSite(url, config, (current, discovered, remaining, pageUrl) => {
+        const denom = unlimited ? Math.max(discovered, current, 1) : Math.max(config.maxPages, 1);
+        const crawlShare = Math.min(1, current / denom);
+        emit({
+          phase: "crawling",
+          current,
+          total: discovered,
+          discovered,
+          remaining,
+          percent: 5 + crawlShare * 50,
+          url: pageUrl,
+          message: unlimited
+            ? `Crawling ${current} done · ${remaining} remaining · ${discovered} from sitemap dig`
+            : `Crawling ${current}/${config.maxPages} · ${discovered} from sitemap dig · ${remaining} left`,
+        });
+      });
+    }
 
     emit({
       phase: "security",

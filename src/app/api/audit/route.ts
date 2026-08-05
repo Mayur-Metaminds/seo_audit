@@ -10,6 +10,7 @@ const startAuditSchema = z.object({
   url: z.string().min(1, "URL is required"),
   /** Omit or 0 = unlimited (recommended on custom servers). */
   maxPages: z.number().min(0).optional(),
+  mode: z.enum(["sitemap", "webflow"]).optional().default("sitemap"),
 });
 
 export async function POST(request: Request) {
@@ -27,6 +28,7 @@ export async function POST(request: Request) {
     }
 
     const maxPages = resolveMaxPages(parsed.data.maxPages);
+    const mode = parsed.data.mode;
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
@@ -45,6 +47,7 @@ export async function POST(request: Request) {
               maxPages,
               includeSubdomains: false,
               followExternalLinks: false,
+              mode,
             },
             (progress) => send({ type: "progress", ...progress })
           );
