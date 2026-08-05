@@ -1,8 +1,7 @@
 import type { AuditConfig, CrawledPage } from "@/types/audit.types";
 import { fetchWithRedirects } from "./fetchPage";
 import { fetchRobotsTxt, fetchSitemap, isUrlBlockedByRobots } from "./sitemap";
-import { isIndexableUrl, isSameDomain, normalizeUrl, resolveUrl } from "@/lib/utils/url";
-import { parseHtml } from "@/lib/utils/html";
+import { isIndexableUrl, isSameDomain, normalizeUrl } from "@/lib/utils/url";
 
 export interface CrawlResult {
   pages: CrawledPage[];
@@ -11,6 +10,8 @@ export interface CrawlResult {
   remainingUrls: string[];
   /** URLs skipped because robots.txt blocked them. */
   blockedUrls: string[];
+  /** True when crawl queue was limited to sitemap.xml (+ nested) URLs only. */
+  sitemapOnly: boolean;
   robots: Awaited<ReturnType<typeof fetchRobotsTxt>>;
   sitemap: Awaited<ReturnType<typeof fetchSitemap>>;
   linkStatusMap: Map<string, number>;
@@ -25,28 +26,61 @@ export type CrawlProgressCallback = (
 
 const CRAWL_CONCURRENCY = 5;
 
+/**
+ * Crawl policy (strict, sitemap-driven only):
+ * - Page universe = leaf URLs discovered by digging robots Sitemap: + /sitemap.xml
+ *   and any nested sitemap / .xml files those documents reference (any name).
+ * - Never invent routes from on-page links or guessed sitemap paths.
+ * - Seed URL is included so the requested audit entry is always checked.
+ * - If no sitemap pages found: crawl only the seed URL.
+ */
 export async function crawlSite(
   startUrl: string,
   config: AuditConfig,
   onProgress?: CrawlProgressCallback
 ): Promise<CrawlResult> {
   const baseUrl = normalizeUrl(startUrl);
+  const origin = new URL(baseUrl).origin;
 
   const robots = await fetchRobotsTxt(baseUrl);
   const sitemap = await fetchSitemap(baseUrl, robots.sitemaps);
 
-  const queueSet = new Set<string>([baseUrl]);
+  const queueSet = new Set<string>();
   const crawled = new Map<string, CrawledPage>();
-  const allDiscovered = new Set<string>([baseUrl]);
+  const allDiscovered = new Set<string>();
   const blockedUrls = new Set<string>();
   const linkStatusMap = new Map<string, number>();
 
-  for (const sitemapUrl of sitemap.urls) {
-    if (isSameDomain(sitemapUrl, baseUrl) && isIndexableUrl(sitemapUrl)) {
-      const normalized = normalizeUrl(sitemapUrl);
-      queueSet.add(normalized);
-      allDiscovered.add(normalized);
+  const sitemapOnly = sitemap.exists && sitemap.urls.length > 0;
+
+  if (sitemapOnly) {
+    // Strict sitemap universe
+    for (const sitemapUrl of sitemap.urls) {
+      try {
+        if (!isSameDomain(sitemapUrl, baseUrl)) continue;
+        if (!isIndexableUrl(sitemapUrl)) continue;
+        const normalized = normalizeUrl(sitemapUrl);
+        queueSet.add(normalized);
+        allDiscovered.add(normalized);
+      } catch {
+        /* ignore bad loc */
+      }
     }
+
+    // Always include the URL the user asked to audit
+    try {
+      if (isSameDomain(baseUrl, origin)) {
+        const seed = normalizeUrl(baseUrl);
+        queueSet.add(seed);
+        allDiscovered.add(seed);
+      }
+    } catch {
+      /* ignore */
+    }
+  } else {
+    // No sitemap → single-page seed only (never invent off-link URLs)
+    queueSet.add(baseUrl);
+    allDiscovered.add(baseUrl);
   }
 
   const queue = [...queueSet];
@@ -65,7 +99,6 @@ export async function crawlSite(
     }
 
     if (batch.length === 0) {
-      // Only robots-blocked URLs left — drain them so we don't spin forever
       if (queue.length > 0) {
         for (const url of queue) {
           if (!crawled.has(url)) blockedUrls.add(url);
@@ -79,34 +112,20 @@ export async function crawlSite(
       batch.map(async (url) => {
         try {
           const page = await fetchWithRedirects(url);
-          // Preserve HTTP body as rawHtml for view-source parity (head SEO)
+          // Preserve HTTP body as rawHtml for view-source parity (head SEO / JSON-LD)
           crawled.set(url, { ...page, rawHtml: page.html });
           linkStatusMap.set(normalizeUrl(page.finalUrl), page.statusCode);
+          linkStatusMap.set(url, page.statusCode);
 
-          if (page.statusCode === 200 && page.html) {
-            const $ = parseHtml(page.html);
-            $("a[href]").each((_, el) => {
-              const href = $(el).attr("href");
-              if (!href) return;
-              const resolved = resolveUrl(href, page.finalUrl);
-              if (!resolved || !isIndexableUrl(resolved)) return;
-              if (!isSameDomain(resolved, baseUrl)) return;
-
-              const normalized = normalizeUrl(resolved);
-              allDiscovered.add(normalized);
-
-              if (!crawled.has(normalized) && !queueSet.has(normalized) && !blockedUrls.has(normalized)) {
-                queueSet.add(normalized);
-                queue.push(normalized);
-              }
-            });
-          }
+          // IMPORTANT: do NOT expand crawl queue from in-page links.
+          // Link graph is used only for broken-link / orphan analysis against sitemap pages.
         } catch (error) {
           crawled.set(url, {
             url,
             finalUrl: url,
             statusCode: 0,
             html: "",
+            rawHtml: "",
             headers: {},
             responseTimeMs: 0,
             ttfbMs: 0,
@@ -125,15 +144,14 @@ export async function crawlSite(
     );
   }
 
-  const remainingUrls = [...allDiscovered].filter(
-    (u) => !crawled.has(u) && !blockedUrls.has(u)
-  );
+  const remainingUrls = [...allDiscovered].filter((u) => !crawled.has(u) && !blockedUrls.has(u));
 
   return {
     pages: [...crawled.values()],
     allDiscoveredUrls: [...allDiscovered],
     remainingUrls,
     blockedUrls: [...blockedUrls],
+    sitemapOnly,
     robots,
     sitemap,
     linkStatusMap,

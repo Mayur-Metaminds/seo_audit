@@ -15,7 +15,6 @@ import {
 import { auditSiteLevel } from "@/lib/auditors/siteLevel";
 import { buildPageResults, finalizeReport } from "@/lib/audit/scoring";
 import { getDomain, generateId } from "@/lib/utils/url";
-import { getTotalMaxScore } from "@/data/framework";
 import { slimReport } from "@/lib/audit/slimReport";
 import { isUnlimitedPages } from "@/lib/audit/limits";
 import {
@@ -110,7 +109,8 @@ export async function runAudit(
     siteChecks: [],
     categoryScores: [],
     overallScore: 0,
-    maxScore: getTotalMaxScore(),
+    maxScore: 0,
+    scorePercentage: 0,
     grade: "critical",
     summary: { passed: 0, warnings: 0, failed: 0, manual: 0, topIssues: [], strengths: [] },
   };
@@ -124,9 +124,9 @@ export async function runAudit(
       discovered: 0,
       percent: 2,
       url,
-      message: unlimited
-        ? "Fetching robots.txt and sitemap (full site crawl)..."
-        : `Fetching robots.txt and sitemap (cap ${config.maxPages} pages)...`,
+        message: unlimited
+        ? "Fetching robots.txt + /sitemap.xml (dig nested .xml children only; no guessed paths)..."
+        : `Fetching robots.txt + /sitemap.xml (cap ${config.maxPages}; nested dig only)...`,
     });
 
     const crawl = await crawlSite(url, config, (current, discovered, remaining, pageUrl) => {
@@ -141,8 +141,8 @@ export async function runAudit(
         percent: 5 + crawlShare * 50,
         url: pageUrl,
         message: unlimited
-          ? `Crawling ${current} done · ${remaining} remaining · ${discovered} found`
-          : `Crawling ${current}/${config.maxPages} · ${discovered} found · ${remaining} left in queue`,
+          ? `Crawling ${current} done · ${remaining} remaining · ${discovered} from sitemap dig`
+          : `Crawling ${current}/${config.maxPages} · ${discovered} from sitemap dig · ${remaining} left`,
       });
     });
 
@@ -260,9 +260,9 @@ export async function runAudit(
             async (psiUrl) => {
               try {
                 const metrics = await fetchPageSpeedMetrics(psiUrl, "mobile");
-                if (!metrics.fetchError) {
-                  psiResults.set(psiUrl, metrics);
-                } else {
+                // Always attach (including fetchError) so evidence shows real PSI failure, not "missing key"
+                psiResults.set(psiUrl, metrics);
+                if (metrics.fetchError) {
                   psiFailureHint = metrics.fetchError;
                   psiFailureKind = metrics.errorKind || "http";
                   if (metrics.errorKind === "rate_limit") rateLimited = true;
@@ -325,9 +325,10 @@ export async function runAudit(
           return metrics ? { ...page, labMetrics: metrics } : page;
         });
 
-        if (psiResults.size === 0 && psiFailureHint) {
-          // keep hint
-        } else if (psiResults.size > 0) {
+        const psiSuccessCount = [...psiResults.values()].filter((m) => !m.fetchError).length;
+        if (psiSuccessCount === 0 && psiFailureHint) {
+          // keep hint — all measured URLs failed
+        } else if (psiSuccessCount > 0) {
           psiFailureHint = undefined;
           psiFailureKind = undefined;
         }
@@ -513,6 +514,12 @@ export async function runAudit(
     } else if (skippedPsiNoKey) {
       finalReport.summary.strengths = [
         "Page speed: heuristic mode (add GOOGLE_PSI_API_KEY for Lighthouse/CrUX)",
+        ...finalReport.summary.strengths,
+      ].slice(0, 10);
+    } else if (psiOk) {
+      const measured = pages.filter((p) => p.labMetrics && !p.labMetrics.fetchError).length;
+      finalReport.summary.strengths = [
+        `Page speed: Google PageSpeed / Lighthouse on ${measured} sampled URL(s)`,
         ...finalReport.summary.strengths,
       ].slice(0, 10);
     }

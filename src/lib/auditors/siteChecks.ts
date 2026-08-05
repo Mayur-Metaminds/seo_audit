@@ -233,16 +233,28 @@ export function auditOrphanPages(crawl: CrawlResult, baseUrl: string): CheckResu
     });
   }
 
-  const orphans = crawl.allDiscoveredUrls.filter(
+  // Universe = sitemap URLs only (when present); never invent non-sitemap orphans.
+  const universe = crawl.allDiscoveredUrls;
+  const orphans = universe.filter(
     (u) => !inlinkMap.has(normalizeUrl(u)) && normalizeUrl(u) !== normalizeUrl(baseUrl)
   );
 
-  if (orphans.length > crawl.pages.length * 0.3) {
-    return makeResult(3, "warn", 2, 5, `${orphans.length} potential orphan/low-link pages`, {
-      evidence: orphans.slice(0, 5),
-      recommendation: "Add internal links to orphan pages from related content.",
+  const modeNote = crawl.sitemapOnly
+    ? "sitemap-only crawl (nested sitemaps included)"
+    : "no sitemap — seed URL only";
+
+  if (orphans.length > crawl.pages.length * 0.3 && orphans.length > 2) {
+    return makeResult(3, "warn", 2, 5, `${orphans.length} sitemap URL(s) with no internal links from crawled pages`, {
+      evidence: [...orphans.slice(0, 5), `Mode: ${modeNote}`],
+      recommendation: "Add contextual internal links from related sitemap pages to these destinations.",
     });
   }
 
-  return makeResult(3, "pass", 5, 5, `Crawl structure healthy (${orphans.length} orphans of ${crawl.allDiscoveredUrls.length} discovered)`);
+  return makeResult(
+    3,
+    "pass",
+    5,
+    5,
+    `Crawl structure healthy (${orphans.length} unlinked of ${universe.length} sitemap/seed URL(s); ${modeNote})`
+  );
 }

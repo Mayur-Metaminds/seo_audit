@@ -14,7 +14,7 @@ const features = [
   {
     icon: Search,
     title: "Full Site Crawl",
-    description: "Discovers pages via sitemap and internal links, then audits each one sequentially.",
+    description: "Discovers pages only via robots.txt + /sitemap.xml (and nested .xml children), then audits each one.",
   },
   {
     icon: FileText,

@@ -113,6 +113,8 @@ export interface AuditReport {
   categoryScores: CategoryScore[];
   overallScore: number;
   maxScore: number;
+  /** 0–100, same basis used for grade + UI (score / max of applicable checks). */
+  scorePercentage: number;
   grade: "elite" | "good" | "needs-work" | "critical";
   summary: {
     passed: number;

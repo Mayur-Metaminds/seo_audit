@@ -1,15 +1,20 @@
 import type { AuditReport } from "@/types/audit.types";
-import { CATEGORY_LABELS, FRAMEWORK_CHECKPOINTS } from "@/data/framework";
+import { CATEGORY_LABELS, FRAMEWORK_CHECKPOINTS, getGrade } from "@/data/framework";
 import { formatBytes, formatMs } from "@/lib/utils/url";
 
 export function generateMarkdownReport(report: AuditReport): string {
-  const percentage = report.maxScore > 0 ? Math.round((report.overallScore / report.maxScore) * 100) : 0;
+  const percentage =
+    typeof report.scorePercentage === "number"
+      ? report.scorePercentage
+      : report.maxScore > 0
+        ? Math.round((report.overallScore / report.maxScore) * 100)
+        : 0;
   const gradeLabel = {
     elite: "Elite (90%+)",
     good: "Good (70-89%)",
     "needs-work": "Needs Work (50-69%)",
     critical: "Critical Issues (<50%)",
-  }[report.grade];
+  }[getGrade(percentage)];
 
   let md = `# SEO Audit Report\n\n`;
   md += `**URL:** ${report.url}\n`;

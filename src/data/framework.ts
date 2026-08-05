@@ -1036,10 +1036,11 @@ export function getCheckpoint(id: number): FrameworkCheckpoint | undefined {
 }
 
 export function getGrade(percentage: number): "elite" | "good" | "needs-work" | "critical" {
+  // Must match the number shown as overall % (scorePercentage on the report)
   if (percentage >= 90) return "elite";
   if (percentage >= 70) return "good";
   if (percentage >= 50) return "needs-work";
-  return "critical";
+  return "critical"; // 0–49
 }
 
 export const PRIORITY_COLORS: Record<Priority, string> = {

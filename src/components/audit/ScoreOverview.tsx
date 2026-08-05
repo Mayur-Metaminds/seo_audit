@@ -5,6 +5,7 @@ import type { AuditReport, CheckResult } from "@/types/audit.types";
 import { cn } from "@/lib/utils/cn";
 import { AlertTriangle, CheckCircle2, XCircle, Eye, Code2, ArrowDownRight } from "lucide-react";
 import { SolutionModal } from "./SolutionModal";
+import { getGrade } from "@/data/framework";
 
 const gradeConfig = {
   elite: { label: "Elite", color: "text-success", bg: "bg-success/10 border-success/30" },
@@ -14,8 +15,15 @@ const gradeConfig = {
 };
 
 export function ScoreOverview({ report }: { report: AuditReport }) {
-  const percentage = report.maxScore > 0 ? Math.round((report.overallScore / report.maxScore) * 100) : 0;
-  const grade = gradeConfig[report.grade];
+  // Number + tag always from the same 0–100 %
+  const percentage =
+    typeof report.scorePercentage === "number"
+      ? report.scorePercentage
+      : report.maxScore > 0
+        ? Math.round((report.overallScore / report.maxScore) * 100)
+        : 0;
+  // Derive label from shown % so "21" can never be tagged Good
+  const grade = gradeConfig[getGrade(percentage)];
   const [selectedIssue, setSelectedIssue] = useState<{ check?: CheckResult; checkpointId?: number } | null>(null);
 
   const allChecks: CheckResult[] = [
@@ -60,7 +68,10 @@ export function ScoreOverview({ report }: { report: AuditReport }) {
           </div>
           <p className={cn("text-sm font-medium mt-2", grade.color)}>{grade.label}</p>
           <p className="text-xs text-muted mt-1">
-            {report.overallScore} / {report.maxScore} points
+            {report.overallScore} / {report.maxScore} applicable points
+          </p>
+          <p className="text-[11px] text-muted mt-1.5 leading-snug">
+            Elite 90+ · Good 70–89 · Needs work 50–69 · Critical &lt;50
           </p>
         </div>
 

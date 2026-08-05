@@ -269,6 +269,99 @@ export function auditPerformanceFromLab(page: CrawledPage, lab: LabMetrics): Che
   return checks;
 }
 
+export function auditPerformance(page: CrawledPage): CheckResult[] {
+  if (page.labMetrics && !page.labMetrics.fetchError) {
+    const measured = auditPerformanceFromLab(page, page.labMetrics);
+    if (measured.length > 0) return measured;
+  }
+  return auditPerformanceProxy(page);
+}
+
+export type PerfProxyReason =
+  | "no_key"
+  | "private_url"
+  | "psi_failed"
+  | "not_sampled"
+  | "disabled";
+
+/** Why this page did not get measured Lighthouse metrics. */
+export function getPerfProxyReason(page: CrawledPage): PerfProxyReason {
+  if (page.labMetrics?.fetchError) {
+    const kind = page.labMetrics.errorKind;
+    if (kind === "private_url") return "private_url";
+    if (kind === "no_key") return "no_key";
+    return "psi_failed";
+  }
+  const flag = process.env.ENABLE_PSI?.trim().toLowerCase();
+  if (flag === "0" || flag === "false" || flag === "off") return "disabled";
+
+  const key =
+    process.env.GOOGLE_PSI_API_KEY?.trim() ||
+    process.env.PAGESPEED_API_KEY?.trim() ||
+    process.env.PSI_API_KEY?.trim();
+  if (!key) return "no_key";
+
+  try {
+    const host = new URL(page.finalUrl).hostname.toLowerCase();
+    if (
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      host.endsWith(".local") ||
+      host === "127.0.0.1" ||
+      host === "0.0.0.0"
+    ) {
+      return "private_url";
+    }
+  } catch {
+    /* ignore */
+  }
+
+  // Key present + public URL but no labMetrics → this URL was outside PSI sample batch
+  return "not_sampled";
+}
+
+function proxyReasonCopy(reason: PerfProxyReason, page: CrawledPage): {
+  note: string;
+  cwvMessage: string;
+  recommendation: string;
+} {
+  switch (reason) {
+    case "private_url":
+      return {
+        note: "Heuristic only — Google PageSpeed cannot reach localhost/private URLs. Deploy publicly or use a tunnel for real Lighthouse.",
+        cwvMessage: "Core Web Vitals not measured (site not public to Google PSI)",
+        recommendation:
+          "Audit a publicly reachable HTTPS URL. Localhost can never get Google PSI / Lighthouse lab data.",
+      };
+    case "no_key":
+      return {
+        note: "Heuristic only — not Lighthouse. Set GOOGLE_PSI_API_KEY (and enable the PageSpeed Insights API) for measured CWV.",
+        cwvMessage: "Core Web Vitals not measured — GOOGLE_PSI_API_KEY missing",
+        recommendation: "Add GOOGLE_PSI_API_KEY to server env, enable PageSpeed Insights API in Google Cloud, re-run.",
+      };
+    case "psi_failed":
+      return {
+        note: `Heuristic fallback — PSI/Lighthouse failed for this URL: ${page.labMetrics?.fetchError?.slice(0, 160) || "unknown error"}`,
+        cwvMessage: "Core Web Vitals not measured — PageSpeed Insights request failed",
+        recommendation:
+          "Check that the URL is publicly reachable, not blocked by bot protection, and the API key has PageSpeed Insights enabled.",
+      };
+    case "disabled":
+      return {
+        note: "Heuristic only — ENABLE_PSI is off.",
+        cwvMessage: "Core Web Vitals not measured — PSI disabled",
+        recommendation: "Set ENABLE_PSI=true and GOOGLE_PSI_API_KEY for Lighthouse measurements.",
+      };
+    default:
+      return {
+        note: "Heuristic only for this URL — Lighthouse ran on a site sample (homepage + key pages), not every crawl URL.",
+        cwvMessage: "Core Web Vitals measured on sample URLs only (this page not in PSI batch)",
+        recommendation:
+          "Raise PSI_MAX_URLS to sample more pages, or open homepage / priority pages for full Lighthouse scores.",
+      };
+  }
+}
+
 /** HTML-weight heuristics — only used when PSI metrics are unavailable. */
 export function auditPerformanceProxy(page: CrawledPage): CheckResult[] {
   const checks: CheckResult[] = [];
@@ -281,8 +374,8 @@ export function auditPerformanceProxy(page: CrawledPage): CheckResult[] {
   const images = getImages($);
   const imagesWithoutDims = images.filter((img) => !img.hasDimensions);
 
-  const proxyNote =
-    "Heuristic estimate only — not Lighthouse. Configure GOOGLE_PSI_API_KEY for measured CWV.";
+  const reason = getPerfProxyReason(page);
+  const { note: proxyNote, cwvMessage, recommendation: proxyRec } = proxyReasonCopy(reason, page);
 
   checks.push(
     makeResult(
@@ -295,9 +388,10 @@ export function auditPerformanceProxy(page: CrawledPage): CheckResult[] {
         scope: "page",
         confidence: "low",
         evidence: [proxyNote, `Observed during HTML crawl fetch: ${ttfb}ms`],
-        recommendation: "Enable PSI for lab TTFB; optimise server/CDN.",
+        recommendation: proxyRec,
         affectedUrls: [url],
-        isGenuineSeoIssue: ttfb > 1000,
+        // Crawl TTFB can flag slow origin even without Lighthouse — keep soft
+        isGenuineSeoIssue: reason !== "private_url" && ttfb > 1000,
       }
     )
   );
@@ -310,6 +404,7 @@ export function auditPerformanceProxy(page: CrawledPage): CheckResult[] {
       scope: "page",
       confidence: "low",
       evidence: [proxyNote],
+      recommendation: proxyRec,
       affectedUrls: [url],
       isGenuineSeoIssue: false,
     })
@@ -319,6 +414,7 @@ export function auditPerformanceProxy(page: CrawledPage): CheckResult[] {
       scope: "page",
       confidence: "low",
       evidence: [proxyNote, "Replace with PageSpeed Insights LCP for ranking-accurate results"],
+      recommendation: proxyRec,
       affectedUrls: [url],
       isGenuineSeoIssue: false,
     })
@@ -352,6 +448,7 @@ export function auditPerformanceProxy(page: CrawledPage): CheckResult[] {
       scope: "page",
       confidence: "low",
       evidence: [proxyNote, "INP requires CrUX field data from PageSpeed Insights"],
+      recommendation: proxyRec,
       affectedUrls: [url],
       isGenuineSeoIssue: false,
     })
@@ -361,6 +458,7 @@ export function auditPerformanceProxy(page: CrawledPage): CheckResult[] {
       scope: "page",
       confidence: "low",
       evidence: [proxyNote],
+      recommendation: proxyRec,
       affectedUrls: [url],
       isGenuineSeoIssue: false,
     })
@@ -373,39 +471,30 @@ export function auditPerformanceProxy(page: CrawledPage): CheckResult[] {
       stylesheets > 10 || pageSizeKb > 2000 ? 3 : 5,
       5,
       "Speed Index heuristic",
-      { scope: "page", confidence: "low", evidence: [proxyNote], affectedUrls: [url], isGenuineSeoIssue: false }
-    )
-  );
-
-  checks.push(
-    makeResult(
-      21,
-      "manual",
-      10,
-      10,
-      "Core Web Vitals not measured — configure GOOGLE_PSI_API_KEY",
       {
         scope: "page",
         confidence: "low",
-        evidence: [
-          proxyNote,
-          "Without Google PageSpeed Insights we refuse to claim CWV pass/fail (avoids false scores).",
-          "Add GOOGLE_PSI_API_KEY to enable Lighthouse lab + CrUX field measurements.",
-        ],
-        recommendation: "Set GOOGLE_PSI_API_KEY and re-run. CWV ranking uses field data when available.",
+        evidence: [proxyNote],
+        recommendation: proxyRec,
+        affectedUrls: [url],
         isGenuineSeoIssue: false,
-        suggestion: "https://developers.google.com/speed/docs/insights/v5/get-started",
       }
     )
   );
 
-  return checks;
-}
+  checks.push(
+    makeResult(21, "manual", 10, 10, cwvMessage, {
+      scope: "page",
+      confidence: "low",
+      evidence: [
+        proxyNote,
+        "Without Google PageSpeed Insights we refuse to claim CWV pass/fail (avoids false scores).",
+      ],
+      recommendation: proxyRec,
+      isGenuineSeoIssue: false,
+      suggestion: "https://developers.google.com/speed/docs/insights/v5/get-started",
+    })
+  );
 
-export function auditPerformance(page: CrawledPage): CheckResult[] {
-  if (page.labMetrics && !page.labMetrics.fetchError) {
-    const measured = auditPerformanceFromLab(page, page.labMetrics);
-    if (measured.length > 0) return measured;
-  }
-  return auditPerformanceProxy(page);
+  return checks;
 }

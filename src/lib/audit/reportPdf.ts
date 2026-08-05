@@ -1,7 +1,7 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { AuditReport } from "@/types/audit.types";
-import { FRAMEWORK_CHECKPOINTS } from "@/data/framework";
+import { FRAMEWORK_CHECKPOINTS, getGrade } from "@/data/framework";
 import { formatBytes, formatMs } from "@/lib/utils/url";
 
 const COLORS = {
@@ -75,19 +75,25 @@ export function generatePdfReport(report: AuditReport): Uint8Array {
   }
 
   // ── Cover Banner ──
-  const percentage = report.maxScore > 0 ? Math.round((report.overallScore / report.maxScore) * 100) : 0;
+  const percentage =
+    typeof report.scorePercentage === "number"
+      ? report.scorePercentage
+      : report.maxScore > 0
+        ? Math.round((report.overallScore / report.maxScore) * 100)
+        : 0;
+  const gradeKey = getGrade(percentage);
   const gradeLabel = {
     elite: "Elite (90%+)",
     good: "Good (70-89%)",
     "needs-work": "Needs Work (50-69%)",
     critical: "Critical (<50%)",
-  }[report.grade];
+  }[gradeKey];
   const gradeColor = {
     elite: COLORS.pass,
     good: COLORS.brand,
     "needs-work": COLORS.warn,
     critical: COLORS.fail,
-  }[report.grade];
+  }[gradeKey];
 
   doc.setFillColor(...COLORS.dark);
   doc.rect(0, 0, pageWidth, 50, "F");

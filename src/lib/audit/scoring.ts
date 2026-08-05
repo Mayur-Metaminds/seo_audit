@@ -1,5 +1,15 @@
 import type { AuditCategory, AuditReport, CategoryScore, CheckOccurrence, CheckResult, PageAuditResult } from "@/types/audit.types";
-import { CATEGORY_LABELS, FRAMEWORK_CHECKPOINTS, getGrade, getCategoryMaxScores, getTotalMaxScore } from "@/data/framework";
+import { CATEGORY_LABELS, FRAMEWORK_CHECKPOINTS, getGrade } from "@/data/framework";
+
+/** Manual & N/A never affect score % (exclude from both numerator and denominator). */
+function isApplicableCheck(check: CheckResult): boolean {
+  return check.status !== "manual" && check.status !== "na";
+}
+
+export function scorePercentage(earned: number, max: number): number {
+  if (max <= 0) return 0;
+  return Math.min(100, Math.max(0, Math.round((earned / max) * 100)));
+}
 
 function normalizeMessageKey(message: string): string {
   return message.replace(/\d+/g, "N").replace(/\s+/g, " ").trim().toLowerCase();
@@ -166,23 +176,23 @@ function placeholderCheck(checkpointId: number): CheckResult {
 }
 
 export function buildCategoryScores(aggregated: Map<number, CheckResult>): CategoryScore[] {
-  const categoryMaxScores = getCategoryMaxScores();
   const categories = Object.keys(CATEGORY_LABELS) as AuditCategory[];
 
   return categories.map((category) => {
     const checkpoints = FRAMEWORK_CHECKPOINTS.filter((c) => c.category === category);
     const checks = checkpoints.map((cp) => aggregated.get(cp.id) || placeholderCheck(cp.id));
 
-    const scorable = checks.filter((c) => c.status !== "manual" && c.status !== "na");
-    const score = scorable.reduce((sum, c) => sum + c.score, 0);
-    const maxScore = categoryMaxScores[category];
+    const applicable = checks.filter(isApplicableCheck);
+    const score = applicable.reduce((sum, c) => sum + c.score, 0);
+    // Denominator = only checks that actually scored (matches overall grade basis)
+    const maxScore = applicable.reduce((sum, c) => sum + c.maxScore, 0);
 
     return {
       category,
       label: CATEGORY_LABELS[category],
       score: Math.round(score * 10) / 10,
       maxScore,
-      percentage: maxScore > 0 ? Math.min(100, Math.round((score / maxScore) * 100)) : 0,
+      percentage: scorePercentage(score, maxScore),
       checks,
     };
   });
@@ -254,17 +264,11 @@ export function finalizeReport(
   const aggregated = aggregateChecks(allChecks);
   const categoryScores = buildCategoryScores(aggregated);
   const siteChecks = [...aggregated.values()].filter((c) => c.scope === "site");
-  const totalScore = categoryScores.reduce((sum, c) => sum + c.score, 0);
-  const maxScore = getTotalMaxScore();
-  const scorableMax = categoryScores.reduce(
-    (sum, cat) =>
-      sum +
-      cat.checks
-        .filter((c) => c.status !== "manual" && c.status !== "na")
-        .reduce((s, c) => s + c.maxScore, 0),
-    0
-  );
-  const percentage = scorableMax > 0 ? (totalScore / scorableMax) * 100 : 0;
+
+  // Single basis for UI + grade: earned points / max of applicable checks only
+  const overallScore = Math.round(categoryScores.reduce((sum, c) => sum + c.score, 0) * 10) / 10;
+  const maxScore = categoryScores.reduce((sum, c) => sum + c.maxScore, 0);
+  const percentage = scorePercentage(overallScore, maxScore);
 
   return {
     ...report,
@@ -273,8 +277,9 @@ export function finalizeReport(
     pageResults,
     siteChecks,
     categoryScores,
-    overallScore: Math.round(totalScore * 10) / 10,
+    overallScore,
     maxScore,
+    scorePercentage: percentage,
     grade: getGrade(percentage),
     summary: buildSummary(aggregated),
     progress: {

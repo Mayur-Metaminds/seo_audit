@@ -51,8 +51,9 @@ export function auditSiteLevel(crawl: CrawlResult, baseUrl: string): CheckResult
   }
 
   if (!sitemap.exists) {
-    checks.push(makeResult(2, "fail", 0, 5, "XML sitemap not found", {
-      recommendation: "Create and submit sitemap.xml listing all indexable URLs.",
+    checks.push(makeResult(2, "fail", 0, 5, "XML sitemap not found — audit limited to seed URL only", {
+      recommendation:
+        "Publish /sitemap.xml (or point robots.txt Sitemap: at your index) listing indexable URLs. Nested child sitemaps are followed only when referenced inside parent XML — never guessed. Crawl will not invent pages from links.",
       evidence: sitemap.errors.slice(0, 3),
     }));
   } else if (sitemap.urlCount === 0) {
@@ -61,12 +62,19 @@ export function auditSiteLevel(crawl: CrawlResult, baseUrl: string): CheckResult
     }));
   } else if (sitemap.urlCount > 50000) {
     checks.push(makeResult(2, "warn", 3, 5, `Sitemap has ${sitemap.urlCount} URLs (should split >50k)`, {
-      evidence: [`${sitemap.urlCount} URLs`],
+      evidence: [`${sitemap.urlCount} URLs`, sitemap.url],
     }));
   } else {
-    checks.push(makeResult(2, "pass", 5, 5, `Sitemap found with ${sitemap.urlCount} URLs`, {
-      evidence: [sitemap.url],
-    }));
+    checks.push(
+      makeResult(2, "pass", 5, 5, `Sitemap found with ${sitemap.urlCount} page URL(s) (strict dig → nested .xml only)`, {
+        evidence: [
+          sitemap.url,
+          crawl.sitemapOnly
+            ? "Crawl queue = pages from sitemap dig (robots + /sitemap.xml + nested locs) + seed"
+            : "Crawl queue limited",
+        ],
+      })
+    );
   }
 
   if (!baseUrl.startsWith("https://")) {

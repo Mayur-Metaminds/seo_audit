@@ -5,7 +5,8 @@ import {
   getHeadings,
   getHreflangTags,
   getImages,
-  getJsonLdSchemas,
+  resolvePageJsonLd,
+  collectJsonLdTypes,
   getMetaContent,
   getOpenGraphTags,
   getRobotsMeta,
@@ -524,23 +525,8 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
     );
   }
 
-  // #16 Schema (JSON-LD) — check both HTTP HTML and rendered DOM
-  const schemas = [
-    ...getJsonLdSchemas($head),
-    ...(page.rawHtml ? getJsonLdSchemas($) : []),
-  ];
-  // de-dupe by stringifying short keys
-  const schemaUnique = (() => {
-    const seen = new Set<string>();
-    const out: unknown[] = [];
-    for (const s of schemas) {
-      const key = JSON.stringify(s).slice(0, 200);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(s);
-    }
-    return out.length > 0 ? out : getJsonLdSchemas($);
-  })();
+  // #16 Schema (JSON-LD) — multi-source (raw HTML + rendered) like view-source
+  const schemaUnique = resolvePageJsonLd(page);
   const og = getOpenGraphTags($head);
   const missingOg = ["og:title", "og:description", "og:image"].filter((k) => !og[k]);
   if (schemaUnique.length === 0) {
@@ -548,7 +534,7 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
       makeResult(16, "fail", 0, 5, "No JSON-LD structured data", {
         scope: "page",
         evidence: [
-          "No script type=application/ld+json",
+          "No script type=application/ld+json found in HTTP HTML or rendered DOM",
           ...(missingOg.length ? [`Open Graph also incomplete: ${missingOg.join(", ")}`] : []),
         ],
         issueCode: "<!-- No JSON-LD block in document -->",
@@ -562,19 +548,17 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
 </script>\n// Prefer specific types: Organization, Article, Product, BreadcrumbList, FAQPage`,
         recommendation: "Add relevant schema (Organization, BreadcrumbList, Article, Product, etc.).",
         affectedUrls: [url],
+        confidence: "high",
       })
     );
   } else {
-    const types = schemaUnique.flatMap((s) => {
-      if (typeof s === "object" && s !== null && "@type" in s) return [(s as { "@type": string })["@type"]];
-      if (Array.isArray(s)) return s.map((item) => (item as { "@type"?: string })["@type"]).filter(Boolean) as string[];
-      return [];
-    });
+    const types = collectJsonLdTypes(schemaUnique);
     checks.push(
       makeResult(16, "pass", 5, 5, `JSON-LD schema found: ${types.join(", ") || "present"}`, {
         scope: "page",
         evidence: [
-          ...types,
+          ...types.slice(0, 12),
+          `${schemaUnique.length} JSON-LD block(s) detected`,
           ...(missingOg.length
             ? [`Open Graph incomplete (social, not schema): missing ${missingOg.join(", ")}`]
             : []),
@@ -582,6 +566,7 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
         recommendation: missingOg.length
           ? "Schema OK. Optionally add og:title, og:description, og:image for richer social shares."
           : undefined,
+        confidence: "high",
       })
     );
   }
@@ -686,7 +671,7 @@ export function auditPage(page: CrawledPage, baseUrl: string): CheckResult[] {
 
   // #18 URL structure
   if (hasBreadcrumbs($)) {
-    const hasBreadcrumbSchema = schemas.some((s) => JSON.stringify(s).includes("BreadcrumbList"));
+    const hasBreadcrumbSchema = schemaUnique.some((s) => JSON.stringify(s).includes("BreadcrumbList"));
     checks.push(makeResult(53, hasBreadcrumbSchema ? "pass" : "warn", hasBreadcrumbSchema ? 5 : 3, 5,
       hasBreadcrumbSchema ? "Breadcrumbs with schema" : "Breadcrumbs present but missing BreadcrumbList schema",
       { scope: "page" }

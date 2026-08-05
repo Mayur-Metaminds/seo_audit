@@ -209,15 +209,119 @@ export function getInternalLinks($: cheerio.CheerioAPI): string[] {
 
 export function getJsonLdSchemas($: cheerio.CheerioAPI): unknown[] {
   const schemas: unknown[] = [];
-  $('script[type="application/ld+json"]').each((_, el) => {
-    try {
-      const text = $(el).html();
-      if (text) schemas.push(JSON.parse(text));
-    } catch {
-      // invalid JSON-LD
-    }
+
+  $("script").each((_, el) => {
+    const type = (($(el).attr("type") || "") + "").toLowerCase().replace(/\s+/g, "");
+    // application/ld+json, application/ld+json;charset=utf-8, etc.
+    if (!type.includes("ld+json") && type !== "application/json+ld") return;
+
+    // Prefer text nodes — cheerio .html() can mangle or miss script bodies
+    const text = ($(el).text() || $(el).html() || "").trim();
+    if (!text) return;
+
+    const parsed = parseJsonLdText(text);
+    if (parsed !== null) schemas.push(parsed);
   });
+
   return schemas;
+}
+
+/** Strip CDATA / comment noise and parse JSON-LD payload. */
+function parseJsonLdText(raw: string): unknown | null {
+  let text = raw
+    .replace(/^\uFEFF/, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/[^\n]*/gm, "")
+    .trim();
+
+  // CDATA wrappers occasionally appear in CMS output
+  const cdata = text.match(/^<!\[CDATA\[([\s\S]*?)\]\]>$/i);
+  if (cdata) text = cdata[1].trim();
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Some sites emit multiple JSON objects concatenated; try graph wrapper recovery
+    try {
+      const fixed = text
+        .replace(/,\s*([\]}])/g, "$1") // trailing commas
+        .replace(/\n/g, " ");
+      return JSON.parse(fixed);
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * Extract JSON-LD from raw HTML (view-source parity) without relying on cheerio alone.
+ */
+export function extractJsonLdFromHtml(html: string | undefined | null): unknown[] {
+  if (!html) return [];
+  const schemas: unknown[] = [];
+  const re = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const attrs = m[1] || "";
+    const typeMatch = attrs.match(/\btype\s*=\s*["']([^"']+)["']/i) || attrs.match(/\btype\s*=\s*([^\s>]+)/i);
+    const type = (typeMatch?.[1] || "").toLowerCase().replace(/\s+/g, "").replace(/["']/g, "");
+    if (!type.includes("ld+json") && type !== "application/json+ld") continue;
+    const parsed = parseJsonLdText(m[2] || "");
+    if (parsed !== null) schemas.push(parsed);
+  }
+  return schemas;
+}
+
+/**
+ * Resolve all JSON-LD blocks from HTTP HTML + rendered DOM (multi-source).
+ */
+export function resolvePageJsonLd(page: { html: string; rawHtml?: string }): unknown[] {
+  const sources = [page.rawHtml, page.html].filter(Boolean) as string[];
+  const out: unknown[] = [];
+  const seen = new Set<string>();
+
+  const pushAll = (list: unknown[]) => {
+    for (const s of list) {
+      const key = JSON.stringify(s).slice(0, 240);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(s);
+    }
+  };
+
+  for (const html of sources) {
+    pushAll(extractJsonLdFromHtml(html));
+    try {
+      pushAll(getJsonLdSchemas(parseHtml(html)));
+    } catch {
+      /* ignore parse errors */
+    }
+  }
+
+  return out;
+}
+
+/** Flatten @type strings from JSON-LD nodes (incl. @graph / arrays). */
+export function collectJsonLdTypes(schemas: unknown[]): string[] {
+  const types: string[] = [];
+  const walk = (node: unknown) => {
+    if (!node) return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    if (typeof node !== "object") return;
+    const obj = node as Record<string, unknown>;
+    if (obj["@type"] != null) {
+      const t = obj["@type"];
+      if (Array.isArray(t)) types.push(...t.map(String));
+      else types.push(String(t));
+    }
+    if (obj["@graph"]) walk(obj["@graph"]);
+  };
+  walk(schemas);
+  return [...new Set(types.filter(Boolean))];
 }
 
 export function getHreflangTags($: cheerio.CheerioAPI): { hreflang: string; href: string }[] {
